@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#151b1a">
-    <meta name="color-scheme" content="light">
-    <title>VIBE REMOTE</title>
+    <meta name="theme-color" content="#020805">
+    <meta name="color-scheme" content="dark">
+    <title>VIBE_REMOTE // CONTROL</title>
     <link rel="stylesheet" href="static/styles.css">
     <script src="static/app.js" defer></script>
   </head>
@@ -13,8 +13,8 @@
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="site-header">
       <div>
-        <p class="eyebrow">PRIVATE CONTROL SURFACE</p>
-        <h1>VIBE REMOTE</h1>
+        <p class="terminal-path">seva@mac:~/vibe-remote$ status</p>
+        <h1>VIBE_REMOTE <span>// CONTROL</span></h1>
       </div>
       <button class="icon-button" id="refresh-button" type="button" aria-label="Refresh dashboard">
         <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
@@ -29,7 +29,6 @@
       <section class="system-strip" aria-labelledby="system-heading">
         <div class="section-heading compact-heading">
           <div>
-            <p class="eyebrow">THIS MAC</p>
             <h2 id="system-heading">Connection health</h2>
           </div>
           <span class="connection-label" id="connection-label">Connecting…</span>
@@ -65,7 +64,6 @@
         <section class="panel" aria-labelledby="accounts-heading">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">IDENTITY</p>
               <h2 id="accounts-heading">Claude accounts</h2>
             </div>
             <button class="secondary-button" id="show-account-form" type="button" aria-expanded="false" aria-controls="account-form">Add</button>
@@ -94,7 +92,6 @@
         <section class="panel" aria-labelledby="workspaces-heading">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">PROJECT ROOTS</p>
               <h2 id="workspaces-heading">Workspaces</h2>
             </div>
             <button class="secondary-button" id="show-workspace-form" type="button" aria-expanded="false" aria-controls="workspace-form">Add</button>
@@ -120,7 +117,6 @@
       <section class="panel checkpoints-panel" aria-labelledby="sessions-heading">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">RESUME FROM CONTEXT</p>
             <h2 id="sessions-heading">Session checkpoints</h2>
           </div>
           <span class="count-badge" id="session-count">—</span>
@@ -138,7 +134,7 @@
 
     <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
       <form method="dialog">
-        <p class="eyebrow">CONFIRM CHANGE</p>
+        <p class="terminal-path">confirm://mutation</p>
         <h2 id="confirm-title">Remove item?</h2>
         <p id="confirm-message"></p>
         <label class="check-row" id="confirm-option-row" hidden>
