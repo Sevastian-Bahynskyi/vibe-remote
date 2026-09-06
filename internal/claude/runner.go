@@ -176,7 +176,9 @@ func (w *readinessWriter) Write(data []byte) (int, error) {
 			return len(data), nil
 		}
 	}
-	if strings.Contains(plain, "https://claude.ai/code/") || strings.Contains(plain, "https://claude.com/code/") {
+	registeredWithoutURL := strings.Contains(plain, "take this session with you") &&
+		strings.Contains(plain, "press ctrl+c to stop")
+	if registeredWithoutURL || strings.Contains(plain, "https://claude.ai/code/") || strings.Contains(plain, "https://claude.com/code/") {
 		w.process.markReady(nil)
 	}
 	return len(data), nil
