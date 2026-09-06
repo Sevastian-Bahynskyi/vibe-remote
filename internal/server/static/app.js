@@ -254,11 +254,12 @@ function renderWorkspaceSelect() {
 }
 
 function accountCard(account) {
+  const authenticated = account.status === 'authenticated';
   const card = createElement('article', { className: `item-card${account.active ? ' active-item' : ''}` });
   const heading = createElement('div', { className: 'item-heading' }, [
     createElement('div', {}, [
       createElement('h3', { text: safeText(account.email, 'Unnamed account') }),
-      createElement('p', { className: 'item-detail', text: account.active ? 'Active on this Mac' : 'Available to switch' }),
+      createElement('p', { className: 'item-detail', text: account.active ? 'Active on this Mac' : authenticated ? 'Available to switch' : 'Sign-in required' }),
     ]),
     statusPill(account.active ? 'Active' : sentenceCase(account.status), account.active ? 'good' : toneForStatus(account.status)),
   ]);
@@ -268,8 +269,8 @@ function accountCard(account) {
     className: 'primary-button',
     text: account.active ? 'Restart / move' : 'Activate',
     type: 'button',
-    disabled: !elements.workspaceSelect.value,
-    title: elements.workspaceSelect.value ? 'Start this Claude account in the selected workspace' : 'Choose a workspace first',
+    disabled: !elements.workspaceSelect.value || !authenticated,
+    title: !authenticated ? 'Refresh and verify this sign-in first' : elements.workspaceSelect.value ? 'Start this Claude account in the selected workspace' : 'Choose a workspace first',
   });
   activate.addEventListener('click', () => activateAccount(account, activate, false));
   actions.append(activate);
