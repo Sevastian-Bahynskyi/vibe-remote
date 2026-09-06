@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#151b1a">
+    <meta name="color-scheme" content="light">
+    <title>VIBE REMOTE</title>
+    <link rel="stylesheet" href="static/styles.css">
+    <script src="static/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">PRIVATE CONTROL SURFACE</p>
+        <h1>VIBE REMOTE</h1>
+      </div>
+      <button class="icon-button" id="refresh-button" type="button" aria-label="Refresh dashboard">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
+          <path d="M20 6v5h-5M4 18v-5h5M18.1 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.9 15" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+
+    <main id="main-content">
+      <section class="system-strip" aria-labelledby="system-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <p class="eyebrow">THIS MAC</p>
+            <h2 id="system-heading">Connection health</h2>
+          </div>
+          <span class="connection-label" id="connection-label">Connecting…</span>
+        </div>
+        <dl class="health-grid">
+          <div>
+            <dt>Worker</dt>
+            <dd id="worker-status">Unknown</dd>
+          </div>
+          <div>
+            <dt>Tailnet only</dt>
+            <dd id="tailnet-status">Unknown</dd>
+          </div>
+          <div>
+            <dt>Checkpoint hook</dt>
+            <dd id="hook-status">Unknown</dd>
+          </div>
+        </dl>
+        <div class="health-actions">
+          <p id="worker-detail">Waiting for this Mac…</p>
+          <button class="text-button" id="install-hooks-button" type="button">Install hooks</button>
+        </div>
+      </section>
+
+      <aside class="power-warning" id="power-warning" aria-label="Availability requirement">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
+          <path d="M12 3v9m5.7-5.7a8 8 0 1 1-11.4 0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/>
+        </svg>
+        <p id="power-warning-text">Keep this Mac awake, connected to power, and online for remote control.</p>
+      </aside>
+
+      <div class="dashboard-grid">
+        <section class="panel" aria-labelledby="accounts-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">IDENTITY</p>
+              <h2 id="accounts-heading">Claude accounts</h2>
+            </div>
+            <button class="secondary-button" id="show-account-form" type="button" aria-expanded="false" aria-controls="account-form">Add</button>
+          </div>
+
+          <form class="inline-form" id="account-form" hidden>
+            <label for="account-email">Claude account email</label>
+            <div class="form-row">
+              <input id="account-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+              <button class="primary-button" type="submit">Add account</button>
+            </div>
+          </form>
+
+          <div class="field-group">
+            <label for="workspace-select">Workspace used when switching</label>
+            <select id="workspace-select">
+              <option value="">Add a workspace first</option>
+            </select>
+          </div>
+
+          <div class="stack" id="accounts-list" aria-live="polite">
+            <p class="loading-copy">Loading accounts…</p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="workspaces-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">PROJECT ROOTS</p>
+              <h2 id="workspaces-heading">Workspaces</h2>
+            </div>
+            <button class="secondary-button" id="show-workspace-form" type="button" aria-expanded="false" aria-controls="workspace-form">Add</button>
+          </div>
+
+          <form class="inline-form" id="workspace-form" hidden>
+            <label for="workspace-label">Label</label>
+            <input id="workspace-label" name="label" type="text" autocomplete="off" placeholder="CoupleGoAI" required>
+            <label for="workspace-path">Absolute path on this Mac</label>
+            <div class="form-row">
+              <input id="workspace-path" name="path" type="text" autocomplete="off" placeholder="/Users/me/Developer/project" required>
+              <button class="primary-button" type="submit">Add workspace</button>
+            </div>
+          </form>
+
+          <div class="stack" id="workspaces-list" aria-live="polite">
+            <p class="loading-copy">Loading workspaces…</p>
+          </div>
+          <p class="section-intro">First use requires local workspace trust. Browser and computer control keep Claude's normal project setup; enable them once with <code>/chrome</code> or <code>/mcp</code>.</p>
+        </section>
+      </div>
+
+      <section class="panel checkpoints-panel" aria-labelledby="sessions-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">RESUME FROM CONTEXT</p>
+            <h2 id="sessions-heading">Session checkpoints</h2>
+          </div>
+          <span class="count-badge" id="session-count">—</span>
+        </div>
+        <p class="section-intro">Choose where to continue. A handoff keeps the latest captured prompt, response, and Git context together.</p>
+        <div class="checkpoint-groups" id="sessions-list" aria-live="polite">
+          <p class="loading-copy">Loading checkpoints…</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Manual switching only. No automatic account rotation or quota tracking.</p>
+    </footer>
+
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <form method="dialog">
+        <p class="eyebrow">CONFIRM CHANGE</p>
+        <h2 id="confirm-title">Remove item?</h2>
+        <p id="confirm-message"></p>
+        <label class="check-row" id="confirm-option-row" hidden>
+          <input id="confirm-option" type="checkbox">
+          <span id="confirm-option-label"></span>
+        </label>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">Cancel</button>
+          <button class="danger-button" id="confirm-button" value="confirm">Remove</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
