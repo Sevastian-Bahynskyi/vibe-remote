@@ -92,9 +92,12 @@ func serve(layout paths.Layout) error {
 	defer stop()
 	awake := systemstate.StartAwakeManager(ctx)
 	defer awake.Close()
-	if err := service.Restore(ctx); err != nil {
+	// Restoring slots waits on Claude Remote Control registration, which is
+	// slow for a cold profile and serialized across slots, so it runs behind
+	// the listener: the dashboard must stay reachable while workers come up.
+	service.RestoreInBackground(ctx, func(err error) {
 		fmt.Fprintln(os.Stderr, "vibe-remote: restore:", err)
-	}
+	})
 	result := make(chan error, 1)
 	go func() { result <- service.ListenAndServe() }()
 	select {

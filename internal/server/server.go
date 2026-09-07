@@ -105,37 +105,76 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // Restore brings every remote session that should be running back up after the
 // service restarts. One failing session must not block the others.
+// Restore brings every slot that should be running back up. Claude serializes
+// activation internally and a cold profile can take over a minute to register,
+// so this is slow by nature and callers should not block the listener on it:
+// see Server.RestoreInBackground.
+//
+// The lock is taken per slot rather than for the whole sweep so dashboard
+// mutations can interleave, and each slot is re-read under that lock because
+// the user may have changed or removed it while an earlier slot was starting.
 func (s *Server) Restore(ctx context.Context) error {
 	remotes, err := s.store.ListRemoteSessions(ctx)
 	if err != nil {
 		return err
 	}
 	var failures []string
-	for _, remote := range remotes {
-		if remote.Desired != model.DesiredRunning {
+	for _, listed := range remotes {
+		if listed.Desired != model.DesiredRunning {
 			continue
 		}
-		account, accountErr := s.store.GetAccount(ctx, remote.AccountID)
-		if accountErr != nil {
-			failures = append(failures, remote.Name+": account unavailable")
-			continue
+		if failure := s.restoreOne(ctx, listed.ID); failure != "" {
+			failures = append(failures, failure)
 		}
-		if account.Status != model.AccountAuthenticated {
-			failures = append(failures, remote.Name+": account is not authenticated")
-			continue
-		}
-		if hookErr := install.InstallClaudeHooks(account.ProfileDir, s.binary); hookErr != nil {
-			failures = append(failures, remote.Name+": "+hookErr.Error())
-			continue
-		}
-		if startErr := s.claude.Activate(ctx, workerSpec(remote)); startErr != nil {
-			failures = append(failures, remote.Name+": "+startErr.Error())
+		if ctx.Err() != nil {
+			break
 		}
 	}
 	if len(failures) > 0 {
 		return errors.New("could not restore " + strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+// restoreOne starts a single slot and reports a human-readable failure, or ""
+// when the slot started or no longer wants to be running.
+func (s *Server) restoreOne(ctx context.Context, id string) string {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+
+	remote, err := s.store.GetRemoteSession(ctx, id)
+	if err != nil {
+		// Removed from the dashboard while an earlier slot was starting.
+		return ""
+	}
+	if remote.Desired != model.DesiredRunning {
+		return ""
+	}
+	account, accountErr := s.store.GetAccount(ctx, remote.AccountID)
+	if accountErr != nil {
+		return remote.Name + ": account unavailable"
+	}
+	if account.Status != model.AccountAuthenticated {
+		return remote.Name + ": account is not authenticated"
+	}
+	if hookErr := install.InstallClaudeHooks(account.ProfileDir, s.binary); hookErr != nil {
+		return remote.Name + ": " + hookErr.Error()
+	}
+	if startErr := s.claude.Activate(ctx, workerSpec(remote)); startErr != nil {
+		return remote.Name + ": " + startErr.Error()
+	}
+	return ""
+}
+
+// RestoreInBackground runs Restore without blocking, reporting failures through
+// report. The dashboard binds immediately and each slot reports its own state
+// as it comes up, instead of the service going dark for the whole sweep.
+func (s *Server) RestoreInBackground(ctx context.Context, report func(error)) {
+	go func() {
+		if err := s.Restore(ctx); err != nil && ctx.Err() == nil {
+			report(err)
+		}
+	}()
 }
 
 func workerSpec(remote model.RemoteSession) claude.WorkerSpec {
