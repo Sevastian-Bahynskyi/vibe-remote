@@ -120,7 +120,10 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 		initialDelay: valueOr(options.InitialBackoff, 500*time.Millisecond),
 		maxDelay:     valueOr(options.MaxBackoff, 10*time.Second),
 		stableWindow: valueOr(options.StableRunWindow, 30*time.Second),
-		readyTimeout: valueOr(options.ReadyTimeout, 20*time.Second),
+		// A cold isolated profile spends its first startup fetching config and
+		// starting MCP servers before Claude registers Remote Control; measured
+		// at ~29s on a first-run profile, so keep well clear of that.
+		readyTimeout: valueOr(options.ReadyTimeout, 90*time.Second),
 		now:          options.Now,
 		workers:      make(map[string]*worker),
 	}

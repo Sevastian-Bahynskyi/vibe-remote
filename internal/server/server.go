@@ -81,8 +81,12 @@ func New(options Options) (*Server, error) {
 		Handler:           server.securityHeaders(server.requireMutationHeader(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// Starting or restarting a remote session blocks until Claude registers
+		// Remote Control, which a cold isolated profile can take well over a
+		// minute to do. Keep this above the manager's ready timeout so a slow but
+		// successful start still reaches the dashboard.
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 	return server, nil
 }
