@@ -101,6 +101,38 @@ var migrations = []migration{
 			`ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))`,
 		},
 	},
+	{
+		version: 5,
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS remote_sessions (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL DEFAULT '',
+				account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				workspace_id TEXT NOT NULL DEFAULT '',
+				workspace_path TEXT NOT NULL,
+				resume_session_id TEXT NOT NULL DEFAULT '',
+				desired TEXT NOT NULL DEFAULT 'running' CHECK (desired IN ('running', 'stopped')),
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS remote_sessions_account
+				ON remote_sessions(account_id, updated_at DESC)`,
+			// Carry the single pre-upgrade routing (active account + selected
+			// workspace) over as the first remote session so a live install keeps
+			// its worker across the upgrade.
+			`INSERT INTO remote_sessions (id, name, account_id, workspace_id, workspace_path, resume_session_id, desired, created_at, updated_at)
+				SELECT 'rs_restored', 'Vibe Remote · ' || accounts.email || ' · ' || workspaces.label,
+					accounts.id, workspaces.id, workspaces.path, '', 'running',
+					strftime('%Y-%m-%dT%H:%M:%f', 'now') || '000000Z',
+					strftime('%Y-%m-%dT%H:%M:%f', 'now') || '000000Z'
+				FROM accounts, workspaces
+				WHERE accounts.active = 1 AND workspaces.selected = 1`,
+			// Several remote sessions may now run at once, so a single active
+			// account is no longer the routing rule.
+			`DROP INDEX IF EXISTS accounts_one_active`,
+			`UPDATE accounts SET active = 0 WHERE active = 1`,
+		},
+	},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

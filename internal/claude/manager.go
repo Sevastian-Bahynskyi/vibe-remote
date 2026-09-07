@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -46,33 +47,46 @@ type Options struct {
 }
 
 type Manager struct {
-	store         Store
-	runner        CommandRunner
-	profilesRoot  string
-	workerPIDFile string
-	stopTimeout   time.Duration
-	restartLimit  int
-	initialDelay  time.Duration
-	maxDelay      time.Duration
-	stableWindow  time.Duration
-	readyTimeout  time.Duration
-	now           func() time.Time
+	store        Store
+	runner       CommandRunner
+	profilesRoot string
+	workerPIDDir string
+	stopTimeout  time.Duration
+	restartLimit int
+	initialDelay time.Duration
+	maxDelay     time.Duration
+	stableWindow time.Duration
+	readyTimeout time.Duration
+	now          func() time.Time
 
-	opMu  sync.Mutex
-	mu    sync.RWMutex
-	work  *worker
-	state model.WorkerStatus
+	opMu    sync.Mutex
+	mu      sync.RWMutex
+	workers map[string]*worker
+}
+
+// WorkerSpec describes one Remote Control session slot to run. ID is the stable
+// key that lets several slots coexist and be restarted independently.
+type WorkerSpec struct {
+	ID              string
+	AccountID       string
+	Workspace       string
+	Name            string
+	ResumeSessionID string
+	Force           bool
 }
 
 type worker struct {
+	id        string
 	account   model.Account
 	workspace string
 	name      string
+	resume    string
 	ctx       context.Context
 	cancel    context.CancelFunc
 	process   Process
 	done      chan struct{}
 	startedAt time.Time
+	state     model.WorkerStatus
 }
 
 func New(appDataRoot string, store Store, options Options) (*Manager, error) {
@@ -97,18 +111,18 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		store:         store,
-		runner:        runner,
-		profilesRoot:  filepath.Join(root, "claude-profiles"),
-		workerPIDFile: filepath.Join(root, "worker.pid"),
-		stopTimeout:   valueOr(options.StopTimeout, 5*time.Second),
-		restartLimit:  options.RestartLimit,
-		initialDelay:  valueOr(options.InitialBackoff, 500*time.Millisecond),
-		maxDelay:      valueOr(options.MaxBackoff, 10*time.Second),
-		stableWindow:  valueOr(options.StableRunWindow, 30*time.Second),
-		readyTimeout:  valueOr(options.ReadyTimeout, 20*time.Second),
-		now:           options.Now,
-		state:         model.WorkerStatus{State: "stopped"},
+		store:        store,
+		runner:       runner,
+		profilesRoot: filepath.Join(root, "claude-profiles"),
+		workerPIDDir: filepath.Join(root, "worker-pids"),
+		stopTimeout:  valueOr(options.StopTimeout, 5*time.Second),
+		restartLimit: options.RestartLimit,
+		initialDelay: valueOr(options.InitialBackoff, 500*time.Millisecond),
+		maxDelay:     valueOr(options.MaxBackoff, 10*time.Second),
+		stableWindow: valueOr(options.StableRunWindow, 30*time.Second),
+		readyTimeout: valueOr(options.ReadyTimeout, 20*time.Second),
+		now:          options.Now,
+		workers:      make(map[string]*worker),
 	}
 	if manager.restartLimit == 0 {
 		manager.restartLimit = 5
@@ -124,6 +138,9 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 	}
 	if err := os.MkdirAll(manager.profilesRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("create Claude profile root: %w", err)
+	}
+	if err := os.MkdirAll(manager.workerPIDDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create Claude worker record directory: %w", err)
 	}
 	if info, err := os.Lstat(manager.profilesRoot); err != nil {
 		return nil, fmt.Errorf("inspect Claude profile root: %w", err)
@@ -258,8 +275,8 @@ func (m *Manager) remove(ctx context.Context, accountID string, force, deleteRec
 	if err != nil {
 		return err
 	}
-	if m.isActive(account.ID) {
-		if err := m.deactivateLocked(ctx, force); err != nil {
+	if m.hasWorkerForAccount(account.ID) {
+		if err := m.stopAccountLocked(ctx, account.ID, force); err != nil {
 			return err
 		}
 	}
@@ -283,13 +300,16 @@ func (m *Manager) remove(ctx context.Context, accountID string, force, deleteRec
 	return nil
 }
 
-// Activate starts the selected profile's official Remote Control server in the
-// selected workspace. At most one worker is active per Manager.
-func (m *Manager) Activate(ctx context.Context, accountID, workspace, name string) error {
+// Activate starts or reconciles one Remote Control session slot. Slots are keyed
+// by spec.ID, so several accounts and workspaces can run at the same time.
+func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
-	account, err := m.account(ctx, accountID)
+	if !validSlotID(spec.ID) {
+		return fmt.Errorf("%w: invalid remote session ID", ErrInvalidPath)
+	}
+	account, err := m.account(ctx, spec.AccountID)
 	if err != nil {
 		return err
 	}
@@ -297,73 +317,113 @@ func (m *Manager) Activate(ctx context.Context, accountID, workspace, name strin
 	if err != nil {
 		return err
 	}
-	workspace, err = safeWorkspace(workspace)
+	workspace, err := safeWorkspace(spec.Workspace)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(name) == "" {
+	resume, err := safeResumeID(spec.ResumeSessionID)
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(spec.Name)
+	if name == "" {
 		name = "Claude remote"
 	}
 
 	m.mu.RLock()
-	current := m.work
-	if current != nil && current.account.ID == account.ID && current.workspace == workspace && m.state.Running {
-		m.mu.RUnlock()
+	current := m.workers[spec.ID]
+	unchanged := current != nil && current.account.ID == account.ID && current.workspace == workspace &&
+		current.name == name && current.resume == resume && current.state.Running
+	m.mu.RUnlock()
+	if unchanged && !spec.Force {
 		return nil
 	}
-	m.mu.RUnlock()
 	if current != nil {
-		if err := m.deactivateLocked(ctx, false); err != nil {
+		if err := m.stopLocked(ctx, spec.ID, spec.Force); err != nil {
 			return err
 		}
+	}
+	if err := enableWorkspaceTools(account.ProfileDir, workspace); err != nil {
+		return fmt.Errorf("enable Claude workspace tools: %w", err)
 	}
 
 	workerContext, cancel := context.WithCancel(context.Background())
 	w := &worker{
-		account: account, workspace: workspace, name: name,
+		id: spec.ID, account: account, workspace: workspace, name: name, resume: resume,
 		ctx: workerContext, cancel: cancel, done: make(chan struct{}),
 	}
+	w.state = model.WorkerStatus{
+		ID: spec.ID, Name: name, AccountID: account.ID, WorkspacePath: workspace, State: "starting",
+	}
 	m.mu.Lock()
-	m.work = w
-	m.state = model.WorkerStatus{AccountID: account.ID, WorkspacePath: workspace, State: "starting"}
+	m.workers[spec.ID] = w
 	m.mu.Unlock()
 
 	process, err := m.start(w)
 	if err != nil {
 		cancel()
 		m.mu.Lock()
-		m.state = model.WorkerStatus{AccountID: account.ID, WorkspacePath: workspace, State: "failed", LastError: "Claude Remote Control failed to start"}
-		m.work = nil
+		delete(m.workers, spec.ID)
 		m.mu.Unlock()
 		return fmt.Errorf("start Claude Remote Control: %w", err)
 	}
 	go m.supervise(w, process)
 	if err := m.waitReady(w, process); err != nil {
-		_ = m.deactivateLocked(context.Background(), true)
+		_ = m.stopLocked(context.Background(), spec.ID, true)
 		return fmt.Errorf("Claude Remote Control did not become ready: %w", err)
 	}
 	m.markRunning(w, process)
 	return nil
 }
 
-func (m *Manager) Deactivate(ctx context.Context, force bool) error {
+// Deactivate stops the worker for one slot. Stopping a slot that is not running
+// is not an error.
+func (m *Manager) Deactivate(ctx context.Context, slotID string, force bool) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
-	return m.deactivateLocked(ctx, force)
+	return m.stopLocked(ctx, slotID, force)
 }
 
-func (m *Manager) deactivateLocked(ctx context.Context, force bool) error {
+// DeactivateAccount stops every worker belonging to one Claude account.
+func (m *Manager) DeactivateAccount(ctx context.Context, accountID string, force bool) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	return m.stopAccountLocked(ctx, accountID, force)
+}
+
+func (m *Manager) stopAccountLocked(ctx context.Context, accountID string, force bool) error {
+	for _, slotID := range m.slotsForAccount(accountID) {
+		if err := m.stopLocked(ctx, slotID, force); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) slotsForAccount(accountID string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	slots := make([]string, 0, len(m.workers))
+	for id, w := range m.workers {
+		if w.account.ID == accountID {
+			slots = append(slots, id)
+		}
+	}
+	sort.Strings(slots)
+	return slots
+}
+
+func (m *Manager) stopLocked(ctx context.Context, slotID string, force bool) error {
 	m.mu.Lock()
-	w := m.work
+	w := m.workers[slotID]
 	if w == nil {
-		m.state = model.WorkerStatus{State: "stopped"}
 		m.mu.Unlock()
 		return nil
 	}
 	w.cancel()
 	process := w.process
-	m.state.Running = process != nil
-	m.state.State = "stopping"
+	w.state.Running = process != nil
+	w.state.State = "stopping"
 	m.mu.Unlock()
 
 	if process != nil {
@@ -399,24 +459,74 @@ func (m *Manager) deactivateLocked(ctx context.Context, force bool) error {
 	return nil
 }
 
-func (m *Manager) Status() model.WorkerStatus {
+// Status reports one slot. An unknown slot reads as stopped.
+func (m *Manager) Status(slotID string) model.WorkerStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.state
+	w := m.workers[slotID]
+	if w == nil {
+		return model.WorkerStatus{ID: slotID, State: "stopped"}
+	}
+	return w.state
+}
+
+// Statuses reports every known slot, ordered by slot ID.
+func (m *Manager) Statuses() []model.WorkerStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	statuses := make([]model.WorkerStatus, 0, len(m.workers))
+	for _, w := range m.workers {
+		statuses = append(statuses, w.state)
+	}
+	sort.Slice(statuses, func(left, right int) bool { return statuses[left].ID < statuses[right].ID })
+	return statuses
+}
+
+// RunningCount reports how many slots are currently serving Remote Control.
+func (m *Manager) RunningCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, w := range m.workers {
+		if w.state.Running {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *Manager) Close(ctx context.Context) error {
-	return m.Deactivate(ctx, true)
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+	m.mu.RLock()
+	slots := make([]string, 0, len(m.workers))
+	for id := range m.workers {
+		slots = append(slots, id)
+	}
+	m.mu.RUnlock()
+	sort.Strings(slots)
+	var firstErr error
+	for _, slotID := range slots {
+		if err := m.stopLocked(ctx, slotID, true); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (m *Manager) start(w *worker) (Process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.work != w || w.ctx.Err() != nil {
+	if m.workers[w.id] != w || w.ctx.Err() != nil {
 		return nil, context.Canceled
 	}
+	arguments := []string{"--dangerously-skip-permissions", "--chrome", "--verbose"}
+	if w.resume != "" {
+		arguments = append(arguments, "--resume", w.resume)
+	}
+	arguments = append(arguments, "--remote-control", w.name)
 	process, err := m.runner.Start(Command{
-		Args: []string{"remote-control", "--verbose", "--name", w.name},
+		Args: arguments,
 		Dir:  w.workspace,
 		Env:  m.profileEnv(w.account),
 	})
@@ -424,13 +534,14 @@ func (m *Manager) start(w *worker) (Process, error) {
 		return nil, err
 	}
 	w.process = process
-	if err := m.writeWorkerPID(process.PID()); err != nil {
+	if err := m.writeWorkerPID(w.id, process.PID()); err != nil {
 		_ = process.Kill()
 		return nil, err
 	}
 	w.startedAt = m.now()
-	m.state = model.WorkerStatus{
-		AccountID: w.account.ID, WorkspacePath: w.workspace, PID: process.PID(), State: "connecting",
+	w.state = model.WorkerStatus{
+		ID: w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
+		PID: process.PID(), State: "connecting",
 	}
 	return process, nil
 }
@@ -504,11 +615,48 @@ func (m *Manager) waitReady(w *worker, process Process) error {
 func (m *Manager) markRunning(w *worker, process Process) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.work == w && w.process == process {
-		m.state = model.WorkerStatus{
-			AccountID: w.account.ID, WorkspacePath: w.workspace, Running: true, PID: process.PID(), State: "running",
+	if m.workers[w.id] == w && w.process == process {
+		w.state = model.WorkerStatus{
+			ID: w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
+			Running: true, PID: process.PID(), State: "running",
+			RemoteURL: remoteControlURLForProcess(w.account.ProfileDir, process.PID(), process.RemoteURL()),
 		}
 	}
+}
+
+func remoteControlURLForProcess(profileDir string, pid int, fallback string) string {
+	data, err := os.ReadFile(filepath.Join(profileDir, ".claude.json"))
+	if err != nil {
+		return fallback
+	}
+	var state struct {
+		Bridges map[string]struct {
+			PID int `json:"pid"`
+		} `json:"replBridgePlaceholders"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fallback
+	}
+	for bridgeID, bridge := range state.Bridges {
+		if bridge.PID == pid && validBridgeSessionID(bridgeID) {
+			return "https://claude.ai/code/" + bridgeID
+		}
+	}
+	return fallback
+}
+
+func validBridgeSessionID(value string) bool {
+	if !strings.HasPrefix(value, "cse_") || len(value) == len("cse_") {
+		return false
+	}
+	for _, character := range value[len("cse_"):] {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) account(ctx context.Context, accountID string) (model.Account, error) {
@@ -569,79 +717,120 @@ func (m *Manager) recordAccountError(ctx context.Context, account model.Account,
 	return account, errors.New(message)
 }
 
-func (m *Manager) isActive(accountID string) bool {
+func (m *Manager) hasWorkerForAccount(accountID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.work != nil && m.work.account.ID == accountID
+	for _, w := range m.workers {
+		if w.account.ID == accountID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) clearStopped(w *worker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.work == w {
-		m.removeWorkerPID(w.process)
-		m.work = nil
-		m.state = model.WorkerStatus{State: "stopped"}
+	if m.workers[w.id] == w {
+		m.removeWorkerPID(w.id, w.process)
+		delete(m.workers, w.id)
 	}
 }
 
 func (m *Manager) markStopped(w *worker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.work == w {
-		m.removeWorkerPID(w.process)
-		m.state.Running = false
-		m.state.PID = 0
-		m.state.State = "stopped"
+	if m.workers[w.id] == w {
+		m.removeWorkerPID(w.id, w.process)
+		w.state.Running = false
+		w.state.PID = 0
+		w.state.State = "stopped"
 	}
 }
 
 func (m *Manager) markRestarting(w *worker, lastError string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.work == w {
-		m.state.Running = false
-		m.state.PID = 0
-		m.state.State = "restarting"
-		m.state.LastError = lastError
+	if m.workers[w.id] == w {
+		w.state.Running = false
+		w.state.PID = 0
+		w.state.State = "restarting"
+		w.state.LastError = lastError
 	}
 }
 
 func (m *Manager) markFailed(w *worker, lastError string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.work == w {
-		m.removeWorkerPID(w.process)
-		m.state.Running = false
-		m.state.PID = 0
-		m.state.State = "failed"
-		m.state.LastError = lastError
+	if m.workers[w.id] == w {
+		m.removeWorkerPID(w.id, w.process)
+		w.state.Running = false
+		w.state.PID = 0
+		w.state.State = "failed"
+		w.state.LastError = lastError
 	}
 }
 
-func (m *Manager) writeWorkerPID(pid int) error {
-	temporary := m.workerPIDFile + ".new"
+func (m *Manager) workerPIDPath(slotID string) (string, error) {
+	if !validSlotID(slotID) {
+		return "", fmt.Errorf("%w: invalid remote session ID", ErrInvalidPath)
+	}
+	return filepath.Join(m.workerPIDDir, slotID+".pid"), nil
+}
+
+func (m *Manager) writeWorkerPID(slotID string, pid int) error {
+	path, err := m.workerPIDPath(slotID)
+	if err != nil {
+		return err
+	}
+	temporary := path + ".new"
 	if err := os.WriteFile(temporary, []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
 		return fmt.Errorf("record Claude worker PID: %w", err)
 	}
-	if err := os.Rename(temporary, m.workerPIDFile); err != nil {
+	if err := os.Rename(temporary, path); err != nil {
 		return fmt.Errorf("activate Claude worker PID: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) removeWorkerPID(process Process) {
+func (m *Manager) removeWorkerPID(slotID string, process Process) {
 	if process == nil {
 		return
 	}
-	data, err := os.ReadFile(m.workerPIDFile)
-	if err == nil && strings.TrimSpace(string(data)) == fmt.Sprintf("%d", process.PID()) {
-		_ = os.Remove(m.workerPIDFile)
+	path, err := m.workerPIDPath(slotID)
+	if err != nil {
+		return
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr == nil && strings.TrimSpace(string(data)) == fmt.Sprintf("%d", process.PID()) {
+		_ = os.Remove(path)
 	}
 }
 
+// cleanupOrphan terminates Remote Control workers left behind by a previous run
+// of this service, including the legacy single-worker record.
 func (m *Manager) cleanupOrphan() error {
-	data, err := os.ReadFile(m.workerPIDFile)
+	legacy := filepath.Join(filepath.Dir(m.workerPIDDir), "worker.pid")
+	if err := m.cleanupOrphanRecord(legacy); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(m.workerPIDDir)
+	if err != nil {
+		return fmt.Errorf("read prior Claude worker records: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pid") {
+			continue
+		}
+		if err := m.cleanupOrphanRecord(filepath.Join(m.workerPIDDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) cleanupOrphanRecord(path string) error {
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -672,7 +861,7 @@ func (m *Manager) cleanupOrphan() error {
 			}
 		}
 	}
-	if err := os.Remove(m.workerPIDFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove prior Claude worker PID: %w", err)
 	}
 	return nil
@@ -792,6 +981,42 @@ func newID() (string, error) {
 	bytes[8] = (bytes[8] & 0x3f) | 0x80
 	encoded := hex.EncodeToString(bytes[:])
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32], nil
+}
+
+// validSlotID keeps remote session IDs usable as filenames inside the worker
+// record directory.
+func validSlotID(id string) bool {
+	if len(id) == 0 || len(id) > 64 {
+		return false
+	}
+	for _, character := range id {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// safeResumeID accepts only the opaque session identifiers Claude prints, so a
+// stored value can never turn into another command-line flag.
+func safeResumeID(input string) (string, error) {
+	resume := strings.TrimSpace(input)
+	if resume == "" {
+		return "", nil
+	}
+	if len(resume) > 128 || strings.HasPrefix(resume, "-") {
+		return "", errors.New("invalid Claude session ID")
+	}
+	for _, character := range resume {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '_' {
+			continue
+		}
+		return "", errors.New("invalid Claude session ID")
+	}
+	return resume, nil
 }
 
 func validID(id string) bool {

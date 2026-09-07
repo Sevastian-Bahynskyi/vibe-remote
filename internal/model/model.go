@@ -99,10 +99,34 @@ type GitSnapshot struct {
 }
 
 type WorkerStatus struct {
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name,omitempty"`
 	AccountID     string `json:"accountId,omitempty"`
 	WorkspacePath string `json:"workspacePath,omitempty"`
 	Running       bool   `json:"running"`
 	PID           int    `json:"pid,omitempty"`
 	State         string `json:"state"`
+	RemoteURL     string `json:"remoteUrl,omitempty"`
 	LastError     string `json:"lastError,omitempty"`
 }
+
+// RemoteSession is one Claude Remote Control session slot. Several may exist at
+// once, each pinned to an account, a workspace, and optionally an existing
+// Claude conversation to resume.
+type RemoteSession struct {
+	ID              string       `json:"id"`
+	Name            string       `json:"name"`
+	AccountID       string       `json:"accountId"`
+	WorkspaceID     string       `json:"workspaceId,omitempty"`
+	WorkspacePath   string       `json:"workspacePath"`
+	ResumeSessionID string       `json:"resumeSessionId,omitempty"`
+	Desired         string       `json:"desired"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	UpdatedAt       time.Time    `json:"updatedAt"`
+	Worker          WorkerStatus `json:"worker"`
+}
+
+const (
+	DesiredRunning = "running"
+	DesiredStopped = "stopped"
+)

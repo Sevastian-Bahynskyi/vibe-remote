@@ -12,7 +12,7 @@ Keep these boundaries intact:
 - Codex account switching is outside this product. Codex only participates in checkpoint capture and handoff consumption.
 - Each Claude account has an isolated `CLAUDE_CONFIG_DIR` and authenticates through the official Claude login flow.
 - Vibe Remote never reads, copies, exports, or stores OAuth tokens.
-- Exactly one managed `claude remote-control` worker may run at a time.
+- Any number of managed interactive Claude Remote Control workers may run at once, one per remote session slot.
 - The dashboard listens on localhost and is exposed only through Tailscale Serve. Tailscale Funnel stays off.
 - Checkpoint capture and consumption are deterministic hook/database operations with no model call.
 - Handoffs are destination-scoped, one-use, and expire after 48 hours.
@@ -51,7 +51,8 @@ The installed binary and state live under `~/Library/Application Support/Vibe Re
 
 - Add, reauthenticate, activate, and remove Claude accounts from the dashboard.
 - Add, select, and remove absolute-path workspaces.
-- Start one `claude remote-control` process for the selected account/workspace and restore it after service restart.
+- Start any number of PTY-backed interactive Claude Remote Control processes, one per remote session slot, each pinned to an account, a workspace, and optionally an earlier conversation to resume; restore every slot that should be running after a service restart.
+- Start, stop, restart, move, and remove one session without disturbing the others.
 - Wait for Claude to report successful Remote Control registration before reporting activation success.
 - Gracefully stop an existing worker; require confirmation before forced interruption.
 - Capture Claude and Codex prompt/response lifecycle events through official hooks.
@@ -104,7 +105,7 @@ The implementation and automated tests are complete, but final user acceptance s
 ## Important implementation facts
 
 - First use of a workspace by an isolated Claude profile may require Claude's local trust prompt; the service detects and reports this instead of bypassing it.
-- The Claude Remote Control URL and OAuth output are intentionally discarded and must not be added to logs or API responses.
+- The active Claude Remote Control URL is held only in service memory and exposed through the tailnet-only dashboard API. OAuth output must not be added to logs or API responses.
 - Dashboard mutations require `X-Vibe-Remote: 1`; keep the same-origin and response security headers intact.
 - Hook protocols do not acknowledge post-injection processing. Handoff finalization is best-effort after successful output to the provider hook pipe.
 - Existing Codex notification configuration is forwarded by the installer rather than replaced.

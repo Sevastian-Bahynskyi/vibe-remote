@@ -442,19 +442,11 @@ func TestHandoffClaimReleaseFinalizeAndSupersession(t *testing.T) {
 	}
 }
 
-func TestSetActiveRoutingHandlesEitherInsertionOrder(t *testing.T) {
+func TestSelectWorkspaceMovesSelectionInEitherInsertionOrder(t *testing.T) {
 	t.Parallel()
 	database := openTestStore(t, filepath.Join(t.TempDir(), "state.db"), time.Now)
 	defer database.Close()
 	ctx := context.Background()
-	for _, account := range []model.Account{
-		{ID: "earlier", Email: "earlier@example.com", Status: model.AccountAuthenticated},
-		{ID: "later", Email: "later@example.com", Status: model.AccountAuthenticated, Active: true},
-	} {
-		if _, err := database.UpsertAccount(ctx, account); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for _, workspace := range []model.Workspace{
 		{ID: "earlier", Path: "/tmp/earlier"},
 		{ID: "later", Path: "/tmp/later", Selected: true},
@@ -463,20 +455,71 @@ func TestSetActiveRoutingHandlesEitherInsertionOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := database.SetActiveRouting(ctx, "earlier", "earlier"); err != nil {
+	if err := database.SelectWorkspace(ctx, "earlier"); err != nil {
 		t.Fatal(err)
 	}
-	accounts, _ := database.ListAccounts(ctx)
 	workspaces, _ := database.ListWorkspaces(ctx)
-	for _, account := range accounts {
-		if account.Active != (account.ID == "earlier") {
-			t.Fatalf("wrong active account: %#v", accounts)
-		}
-	}
 	for _, workspace := range workspaces {
 		if workspace.Selected != (workspace.ID == "earlier") {
 			t.Fatalf("wrong selected workspace: %#v", workspaces)
 		}
+	}
+}
+
+func TestRemoteSessionsCoexistPerAccountAndWorkspace(t *testing.T) {
+	t.Parallel()
+	database := openTestStore(t, filepath.Join(t.TempDir(), "state.db"), time.Now)
+	defer database.Close()
+	ctx := context.Background()
+	account, err := database.UpsertAccount(ctx, model.Account{Email: "person@example.com", Status: model.AccountAuthenticated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := database.UpsertWorkspace(ctx, model.Workspace{Label: "Project", Path: t.TempDir(), Selected: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name: "First", AccountID: account.ID, WorkspaceID: workspace.ID, WorkspacePath: workspace.Path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name: "Second", AccountID: account.ID, WorkspaceID: workspace.ID, WorkspacePath: workspace.Path,
+		ResumeSessionID: "native-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("two remote sessions in one workspace shared an ID")
+	}
+	if first.Desired != model.DesiredRunning {
+		t.Fatalf("default desired state = %q", first.Desired)
+	}
+	sessions, err := database.ListRemoteSessions(ctx)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("list = %#v, %v", sessions, err)
+	}
+
+	stopped, err := database.SetRemoteSessionDesired(ctx, second.ID, model.DesiredStopped)
+	if err != nil || stopped.Desired != model.DesiredStopped {
+		t.Fatalf("stop = %#v, %v", stopped, err)
+	}
+	if _, err := database.SetRemoteSessionDesired(ctx, "missing", model.DesiredStopped); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing remote session error = %v", err)
+	}
+	if err := database.DeleteRemoteSession(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.DeleteAccountAndSessions(ctx, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := database.ListRemoteSessions(ctx)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("removing an account left remote sessions behind: %#v, %v", remaining, err)
 	}
 }
 

@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -130,23 +131,140 @@ func TestActivateStartsRemoteControlAndExportsAccountID(t *testing.T) {
 	account := addStoredAccount(t, manager, store)
 	workspace := t.TempDir()
 
-	if err := manager.Activate(context.Background(), account.ID, workspace, "Project A"); err != nil {
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: account.ID, Workspace: workspace, Name: "Project A"}); err != nil {
 		t.Fatalf("Activate() error = %v", err)
 	}
 	command := runner.startAt(t, 0)
-	if got := strings.Join(command.Args, " "); got != "remote-control --verbose --name Project A" {
+	if got := strings.Join(command.Args, " "); got != "--dangerously-skip-permissions --chrome --verbose --remote-control Project A" {
 		t.Fatalf("worker command = %q", got)
 	}
 	if command.Dir != workspace {
 		t.Fatalf("worker dir = %q", command.Dir)
 	}
+	state, err := os.ReadFile(filepath.Join(account.ProfileDir, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(state, &document); err != nil {
+		t.Fatal(err)
+	}
+	project := document["projects"].(map[string]any)[workspace].(map[string]any)
+	if project["hasTrustDialogAccepted"] != true {
+		t.Fatalf("workspace was not trusted: %#v", project)
+	}
+	servers := project["enabledMcpServers"].([]any)
+	if len(servers) != 1 || servers[0] != "computer-use" {
+		t.Fatalf("enabled MCP servers = %#v", servers)
+	}
 	assertEnv(t, command.Env, "CLAUDE_CONFIG_DIR", account.ProfileDir)
 	assertEnv(t, command.Env, "VIBE_REMOTE_ACCOUNT_ID", account.ID)
-	if status := manager.Status(); !status.Running || status.PID != 101 || status.AccountID != account.ID {
+	if status := manager.Status("slot-a"); !status.Running || status.PID != 101 || status.AccountID != account.ID {
 		t.Fatalf("status = %#v", status)
+	} else if status.RemoteURL != "https://claude.ai/code/cse_test" {
+		t.Fatalf("RemoteURL = %q", status.RemoteURL)
 	}
 	if err := manager.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnableWorkspaceToolsIsIdempotentAndPreservesProjectState(t *testing.T) {
+	t.Parallel()
+	profile := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "project")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(profile, ".claude.json")
+	document := map[string]any{
+		"theme": "dark",
+		"projects": map[string]any{
+			workspace: map[string]any{
+				"lastSessionId":     "session-1",
+				"enabledMcpServers": []any{"existing-server"},
+			},
+		},
+	}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := enableWorkspaceTools(profile, workspace); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enableWorkspaceTools(profile, workspace); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("second workspace tool installation changed Claude state")
+	}
+
+	var updated map[string]any
+	if err := json.Unmarshal(second, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated["theme"] != "dark" {
+		t.Fatal("unrelated Claude state was not preserved")
+	}
+	project := updated["projects"].(map[string]any)[workspace].(map[string]any)
+	if project["lastSessionId"] != "session-1" || project["hasTrustDialogAccepted"] != true {
+		t.Fatalf("project state was not preserved and trusted: %#v", project)
+	}
+	servers := project["enabledMcpServers"].([]any)
+	if len(servers) != 2 || servers[0] != "existing-server" || servers[1] != "computer-use" {
+		t.Fatalf("enabled MCP servers = %#v", servers)
+	}
+}
+
+func TestEnableWorkspaceToolsRejectsMalformedState(t *testing.T) {
+	t.Parallel()
+	profile := t.TempDir()
+	if err := os.WriteFile(filepath.Join(profile, ".claude.json"), []byte(`{"projects":"invalid"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := enableWorkspaceTools(profile, t.TempDir()); err == nil {
+		t.Fatal("malformed Claude project state was silently replaced")
+	}
+}
+
+func TestRemoteControlURLForProcessSelectsLiveBridge(t *testing.T) {
+	t.Parallel()
+	profile := t.TempDir()
+	state := []byte(`{
+  "replBridgePlaceholders": {
+    "cse_stale": {"pid": 101},
+    "cse_live123": {"pid": 202},
+    "not-a-bridge": {"pid": 202}
+  }
+}`)
+	if err := os.WriteFile(filepath.Join(profile, ".claude.json"), state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := remoteControlURLForProcess(profile, 202, "https://claude.ai/code")
+	if got != "https://claude.ai/code/cse_live123" {
+		t.Fatalf("remoteControlURLForProcess() = %q", got)
+	}
+}
+
+func TestRemoteControlURLForProcessFallsBackWithoutMatchingBridge(t *testing.T) {
+	t.Parallel()
+	got := remoteControlURLForProcess(t.TempDir(), 202, "https://claude.ai/code")
+	if got != "https://claude.ai/code" {
+		t.Fatalf("remoteControlURLForProcess() = %q", got)
 	}
 }
 
@@ -161,12 +279,12 @@ func TestSupervisorRestartsAfterUnexpectedExit(t *testing.T) {
 	manager := newTestManager(t, store, runner)
 	account := addStoredAccount(t, manager, store)
 
-	if err := manager.Activate(context.Background(), account.ID, t.TempDir(), "Project"); err != nil {
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project"}); err != nil {
 		t.Fatal(err)
 	}
 	first.exit(errors.New("boom"))
 	waitUntil(t, time.Second, func() bool {
-		status := manager.Status()
+		status := manager.Status("slot-a")
 		return status.Running && status.PID == 202
 	})
 	if runner.startCount() != 2 {
@@ -177,7 +295,7 @@ func TestSupervisorRestartsAfterUnexpectedExit(t *testing.T) {
 	}
 }
 
-func TestActivateStopsExistingWorkerBeforeStartingAnother(t *testing.T) {
+func TestActivateRunsSeveralSlotsAtOnce(t *testing.T) {
 	store := newFakeStore()
 	first := newFakeProcess(101, true, true)
 	second := newFakeProcess(202, true, true)
@@ -193,20 +311,108 @@ func TestActivateStopsExistingWorkerBeforeStartingAnother(t *testing.T) {
 	secondAccount := addStoredAccountWithID(t, manager, store, "abcdefab-cdef-4abc-8def-abcdefabcdef", "second@example.com")
 	workspace := t.TempDir()
 
-	if err := manager.Activate(context.Background(), firstAccount.ID, workspace, "First"); err != nil {
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: firstAccount.ID, Workspace: workspace, Name: "First"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Activate(context.Background(), secondAccount.ID, workspace, "Second"); err != nil {
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-b", AccountID: secondAccount.ID, Workspace: workspace, Name: "Second"}); err != nil {
+		t.Fatal(err)
+	}
+	if signals := first.signalsSeen(); len(signals) != 0 {
+		t.Fatalf("first worker was disturbed by a second slot: %#v", signals)
+	}
+	if manager.RunningCount() != 2 {
+		t.Fatalf("running count = %d, want 2", manager.RunningCount())
+	}
+	if status := manager.Status("slot-a"); !status.Running || status.AccountID != firstAccount.ID || status.PID != 101 {
+		t.Fatalf("slot-a status = %#v", status)
+	}
+	if status := manager.Status("slot-b"); !status.Running || status.AccountID != secondAccount.ID || status.PID != 202 {
+		t.Fatalf("slot-b status = %#v", status)
+	}
+	if statuses := manager.Statuses(); len(statuses) != 2 {
+		t.Fatalf("statuses = %#v", statuses)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActivateReplacesTheWorkerHoldingTheSameSlot(t *testing.T) {
+	store := newFakeStore()
+	first := newFakeProcess(101, true, true)
+	second := newFakeProcess(202, true, true)
+	runner := &fakeRunner{
+		outputs: [][]byte{
+			[]byte(`{"loggedIn":true,"email":"first@example.com"}`),
+			[]byte(`{"loggedIn":true,"email":"second@example.com"}`),
+		},
+		processes: []Process{first, second},
+	}
+	manager := newTestManager(t, store, runner)
+	firstAccount := addStoredAccountWithID(t, manager, store, "12345678-1234-4123-8123-123456789abc", "first@example.com")
+	secondAccount := addStoredAccountWithID(t, manager, store, "abcdefab-cdef-4abc-8def-abcdefabcdef", "second@example.com")
+	workspace := t.TempDir()
+
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: firstAccount.ID, Workspace: workspace, Name: "First"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: secondAccount.ID, Workspace: workspace, Name: "Second"}); err != nil {
 		t.Fatal(err)
 	}
 	if signals := first.signalsSeen(); len(signals) == 0 || signals[0] != os.Interrupt {
 		t.Fatalf("first worker signals = %#v", signals)
 	}
-	if status := manager.Status(); !status.Running || status.AccountID != secondAccount.ID || status.PID != 202 {
+	if status := manager.Status("slot-a"); !status.Running || status.AccountID != secondAccount.ID || status.PID != 202 {
 		t.Fatalf("status = %#v", status)
+	}
+	if manager.RunningCount() != 1 {
+		t.Fatalf("running count = %d, want 1", manager.RunningCount())
 	}
 	if err := manager.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestActivateResumesTheRequestedConversation(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{newFakeProcess(101, true, true)},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+
+	err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(),
+		Name: "Project", ResumeSessionID: "9f2c1d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+	})
+	if err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	want := "--dangerously-skip-permissions --chrome --verbose --resume 9f2c1d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f --remote-control Project"
+	if got := strings.Join(runner.startAt(t, 0).Args, " "); got != want {
+		t.Fatalf("worker command = %q, want %q", got, want)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActivateRejectsUnsafeResumeIdentifier(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeRunner{outputs: [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)}}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+
+	err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(),
+		Name: "Project", ResumeSessionID: "--dangerously-skip-permissions",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid Claude session ID") {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	if runner.startCount() != 0 {
+		t.Fatal("an unsafe resume identifier reached the Claude runner")
 	}
 }
 
@@ -219,10 +425,10 @@ func TestForceStopEscalatesFromInterruptToTerm(t *testing.T) {
 	}
 	manager := newTestManager(t, store, runner)
 	account := addStoredAccount(t, manager, store)
-	if err := manager.Activate(context.Background(), account.ID, t.TempDir(), "Project"); err != nil {
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Deactivate(context.Background(), true); err != nil {
+	if err := manager.Deactivate(context.Background(), "slot-a", true); err != nil {
 		t.Fatalf("Deactivate() error = %v", err)
 	}
 	signals := process.signalsSeen()
@@ -439,13 +645,14 @@ type fakeProcess struct {
 	once                sync.Once
 	ready               chan struct{}
 	readyErr            error
+	remoteURL           string
 }
 
 func newFakeProcess(pid int, interruptTerminates, termTerminates bool) *fakeProcess {
 	process := &fakeProcess{
 		pid: pid, exited: make(chan struct{}),
 		interruptTerminates: interruptTerminates, termTerminates: termTerminates,
-		ready: make(chan struct{}),
+		ready: make(chan struct{}), remoteURL: "https://claude.ai/code/cse_test",
 	}
 	close(process.ready)
 	return process
@@ -456,6 +663,8 @@ func (p *fakeProcess) PID() int { return p.pid }
 func (p *fakeProcess) Ready() <-chan struct{} { return p.ready }
 
 func (p *fakeProcess) ReadyError() error { return p.readyErr }
+
+func (p *fakeProcess) RemoteURL() string { return p.remoteURL }
 
 func (p *fakeProcess) Signal(signal os.Signal) error {
 	p.mu.Lock()

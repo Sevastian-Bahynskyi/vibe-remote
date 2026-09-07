@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#020805">
-    <meta name="color-scheme" content="dark">
-    <title>VIBE_REMOTE // CONTROL</title>
+    <meta name="theme-color" content="#f5f6f8">
+    <meta name="color-scheme" content="light">
+    <title>Vibe Remote</title>
     <link rel="stylesheet" href="static/styles.css">
     <script src="static/app.js" defer></script>
   </head>
@@ -13,8 +13,8 @@
     <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="site-header">
       <div>
-        <p class="terminal-path">seva@mac:~/vibe-remote$ status</p>
-        <h1>VIBE_REMOTE <span>// CONTROL</span></h1>
+        <h1>Vibe Remote</h1>
+        <p class="app-subtitle">Claude control from anywhere</p>
       </div>
       <button class="icon-button" id="refresh-button" type="button" aria-label="Refresh dashboard">
         <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
@@ -29,13 +29,13 @@
       <section class="system-strip" aria-labelledby="system-heading">
         <div class="section-heading compact-heading">
           <div>
-            <h2 id="system-heading">Connection health</h2>
+            <h2 id="system-heading">System status</h2>
           </div>
           <span class="connection-label" id="connection-label">Connecting…</span>
         </div>
         <dl class="health-grid">
           <div>
-            <dt>Worker</dt>
+            <dt>Sessions</dt>
             <dd id="worker-status">Unknown</dd>
           </div>
           <div>
@@ -43,13 +43,15 @@
             <dd id="tailnet-status">Unknown</dd>
           </div>
           <div>
-            <dt>Checkpoint hook</dt>
+            <dt>Hooks</dt>
             <dd id="hook-status">Unknown</dd>
           </div>
         </dl>
         <div class="health-actions">
           <p id="worker-detail">Waiting for this Mac…</p>
-          <button class="text-button" id="install-hooks-button" type="button">Install hooks</button>
+          <div class="health-action-buttons">
+            <button class="text-button" id="install-hooks-button" type="button">Repair hooks</button>
+          </div>
         </div>
       </section>
 
@@ -60,72 +62,144 @@
         <p id="power-warning-text">Keep this Mac awake, connected to power, and online for remote control.</p>
       </aside>
 
-      <div class="dashboard-grid">
-        <section class="panel" aria-labelledby="accounts-heading">
-          <div class="section-heading">
-            <div>
-              <h2 id="accounts-heading">Claude accounts</h2>
-            </div>
-            <button class="secondary-button" id="show-account-form" type="button" aria-expanded="false" aria-controls="account-form">Add</button>
+      <details class="guide-panel">
+        <summary>
+          <span class="guide-heading">
+            <strong>How to use Vibe Remote</strong>
+            <span>Sessions, switching, and handoffs</span>
+          </span>
+        </summary>
+        <div class="guide-content">
+          <ol class="guide-steps">
+            <li>Add a workspace and a Claude account under <strong>Settings</strong>.</li>
+            <li>Start a session: pick the account, the workspace, and a new or earlier conversation.</li>
+            <li>On your phone, switch Claude to the same email, then tap <strong>Open live session</strong>.</li>
+          </ol>
+
+          <div class="guide-examples" aria-label="Examples">
+            <article class="guide-example">
+              <h3>Run several sessions at once</h3>
+              <p>Start one session per task. Each gets its own name in the Claude app, so <strong>New session</strong> never disturbs the ones already running.</p>
+            </article>
+            <article class="guide-example">
+              <h3>Pick up an earlier conversation</h3>
+              <p>Choose it under <strong>Conversation</strong> when starting a session, or use <strong>Move / edit</strong> on a running one and save to restart it there.</p>
+            </article>
+            <article class="guide-example">
+              <h3>Continue in another agent</h3>
+              <p>Open a checkpoint’s <strong>Actions</strong> under Settings, choose a Codex or Claude destination, open it in the same workspace, and type exactly <code>continue</code>.</p>
+            </article>
           </div>
+        </div>
+      </details>
 
-          <form class="inline-form" id="account-form" hidden>
-            <label for="account-email">Claude account email</label>
-            <div class="form-row">
-              <input id="account-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-              <button class="primary-button" type="submit">Add account</button>
-            </div>
-          </form>
+      <section class="panel" aria-labelledby="remote-sessions-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="remote-sessions-heading">Remote sessions</h2>
+          </div>
+          <button class="secondary-button" id="show-remote-session-form" type="button" aria-expanded="false" aria-controls="remote-session-form">New</button>
+        </div>
 
+        <form class="inline-form" id="remote-session-form" hidden>
           <div class="field-group">
-            <label for="workspace-select">Workspace used when switching</label>
-            <select id="workspace-select">
+            <label for="remote-session-account">Claude account</label>
+            <select id="remote-session-account" required>
+              <option value="">Add an account first</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="remote-session-workspace">Workspace</label>
+            <select id="remote-session-workspace" required>
               <option value="">Add a workspace first</option>
             </select>
           </div>
-
-          <div class="stack" id="accounts-list" aria-live="polite">
-            <p class="loading-copy">Loading accounts…</p>
+          <div class="field-group">
+            <label for="remote-session-conversation">Conversation</label>
+            <select id="remote-session-conversation">
+              <option value="">New conversation</option>
+            </select>
           </div>
-        </section>
-
-        <section class="panel" aria-labelledby="workspaces-heading">
-          <div class="section-heading">
-            <div>
-              <h2 id="workspaces-heading">Workspaces</h2>
-            </div>
-            <button class="secondary-button" id="show-workspace-form" type="button" aria-expanded="false" aria-controls="workspace-form">Add</button>
+          <label for="remote-session-name">Name shown in the Claude app (optional)</label>
+          <div class="form-row">
+            <input id="remote-session-name" type="text" autocomplete="off" placeholder="Leave empty for an automatic name">
+            <button class="primary-button" type="submit">Start session</button>
           </div>
+        </form>
 
-          <form class="inline-form" id="workspace-form" hidden>
-            <label for="workspace-label">Label</label>
-            <input id="workspace-label" name="label" type="text" autocomplete="off" placeholder="CoupleGoAI" required>
-            <label for="workspace-path">Absolute path on this Mac</label>
-            <div class="form-row">
-              <input id="workspace-path" name="path" type="text" autocomplete="off" placeholder="/Users/me/Developer/project" required>
-              <button class="primary-button" type="submit">Add workspace</button>
-            </div>
-          </form>
+        <div class="stack" id="remote-sessions-list" aria-live="polite">
+          <p class="loading-copy">Loading sessions…</p>
+        </div>
+        <p class="section-intro">Sessions run independently. Stopping or restarting one leaves the others connected.</p>
+      </section>
 
-          <div class="stack" id="workspaces-list" aria-live="polite">
-            <p class="loading-copy">Loading workspaces…</p>
-          </div>
-          <p class="section-intro">First use requires local workspace trust. Browser and computer control keep Claude's normal project setup; enable them once with <code>/chrome</code> or <code>/mcp</code>.</p>
-        </section>
-      </div>
-
-      <section class="panel checkpoints-panel" aria-labelledby="sessions-heading">
+      <section class="panel" aria-labelledby="accounts-heading">
         <div class="section-heading">
           <div>
-            <h2 id="sessions-heading">Session checkpoints</h2>
+            <h2 id="accounts-heading">Claude accounts</h2>
           </div>
-          <span class="count-badge" id="session-count">—</span>
+          <button class="secondary-button" id="show-account-form" type="button" aria-expanded="false" aria-controls="account-form">Add</button>
         </div>
-        <p class="section-intro">Choose where to continue. A handoff keeps the latest captured prompt, response, and Git context together.</p>
-        <div class="checkpoint-groups" id="sessions-list" aria-live="polite">
-          <p class="loading-copy">Loading checkpoints…</p>
+
+        <form class="inline-form" id="account-form" hidden>
+          <label for="account-email">Claude account email</label>
+          <div class="form-row">
+            <input id="account-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            <button class="primary-button" type="submit">Add account</button>
+          </div>
+        </form>
+
+        <div class="stack" id="accounts-list" aria-live="polite">
+          <p class="loading-copy">Loading accounts…</p>
         </div>
       </section>
+
+      <details class="guide-panel settings-panel" id="settings-panel">
+        <summary>
+          <span class="guide-heading">
+            <strong>Settings</strong>
+            <span>Workspaces and session checkpoints</span>
+          </span>
+        </summary>
+        <div class="guide-content settings-content">
+          <section class="settings-section" aria-labelledby="workspaces-heading">
+            <div class="section-heading">
+              <div>
+                <h2 id="workspaces-heading">Workspaces</h2>
+              </div>
+              <button class="secondary-button" id="show-workspace-form" type="button" aria-expanded="false" aria-controls="workspace-form">Add</button>
+            </div>
+
+            <form class="inline-form" id="workspace-form" hidden>
+              <label for="workspace-label">Label</label>
+              <input id="workspace-label" name="label" type="text" autocomplete="off" placeholder="CoupleGoAI" required>
+              <label for="workspace-path">Absolute path on this Mac</label>
+              <div class="form-row">
+                <input id="workspace-path" name="path" type="text" autocomplete="off" placeholder="/Users/me/Developer/project" required>
+                <button class="primary-button" type="submit">Add workspace</button>
+              </div>
+            </form>
+
+            <div class="stack" id="workspaces-list" aria-live="polite">
+              <p class="loading-copy">Loading workspaces…</p>
+            </div>
+            <p class="section-intro">First use requires local workspace trust. Browser and computer control keep Claude's normal project setup; enable them once with <code>/chrome</code> or <code>/mcp</code>.</p>
+          </section>
+
+          <section class="settings-section" aria-labelledby="sessions-heading">
+            <div class="section-heading">
+              <div>
+                <h2 id="sessions-heading">Session checkpoints</h2>
+              </div>
+              <span class="count-badge" id="session-count">—</span>
+            </div>
+            <p class="section-intro">Choose where to continue. A handoff keeps the latest captured prompt, response, and Git context together.</p>
+            <div class="checkpoint-groups" id="sessions-list" aria-live="polite">
+              <p class="loading-copy">Loading checkpoints…</p>
+            </div>
+          </section>
+        </div>
+      </details>
     </main>
 
     <footer>
@@ -134,7 +208,6 @@
 
     <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
       <form method="dialog">
-        <p class="terminal-path">confirm://mutation</p>
         <h2 id="confirm-title">Remove item?</h2>
         <p id="confirm-message"></p>
         <label class="check-row" id="confirm-option-row" hidden>

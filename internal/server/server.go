@@ -64,7 +64,12 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("GET /api/state", server.state)
 	mux.HandleFunc("POST /api/accounts", server.addAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", server.removeAccount)
-	mux.HandleFunc("POST /api/accounts/{id}/activate", server.activateAccount)
+	mux.HandleFunc("POST /api/remote-sessions", server.createRemoteSession)
+	mux.HandleFunc("PATCH /api/remote-sessions/{id}", server.updateRemoteSession)
+	mux.HandleFunc("POST /api/remote-sessions/{id}/start", server.startRemoteSession)
+	mux.HandleFunc("POST /api/remote-sessions/{id}/restart", server.restartRemoteSession)
+	mux.HandleFunc("POST /api/remote-sessions/{id}/stop", server.stopRemoteSession)
+	mux.HandleFunc("DELETE /api/remote-sessions/{id}", server.deleteRemoteSession)
 	mux.HandleFunc("POST /api/auth/{id}/refresh", server.refreshAccount)
 	mux.HandleFunc("POST /api/workspaces", server.addWorkspace)
 	mux.HandleFunc("DELETE /api/workspaces/{id}", server.removeWorkspace)
@@ -94,28 +99,49 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
 }
 
+// Restore brings every remote session that should be running back up after the
+// service restarts. One failing session must not block the others.
 func (s *Server) Restore(ctx context.Context) error {
-	accounts, err := s.store.ListAccounts(ctx)
+	remotes, err := s.store.ListRemoteSessions(ctx)
 	if err != nil {
 		return err
 	}
-	workspaces, err := s.store.ListWorkspaces(ctx)
-	if err != nil {
-		return err
-	}
-	workspace := selectedWorkspace(workspaces)
-	if workspace.Path == "" {
-		return nil
-	}
-	for _, account := range accounts {
-		if account.Active && account.Status == model.AccountAuthenticated {
-			if err := install.InstallClaudeHooks(account.ProfileDir, s.binary); err != nil {
-				return err
-			}
-			return s.claude.Activate(ctx, account.ID, workspace.Path, "Vibe Remote · "+account.Email)
+	var failures []string
+	for _, remote := range remotes {
+		if remote.Desired != model.DesiredRunning {
+			continue
+		}
+		account, accountErr := s.store.GetAccount(ctx, remote.AccountID)
+		if accountErr != nil {
+			failures = append(failures, remote.Name+": account unavailable")
+			continue
+		}
+		if account.Status != model.AccountAuthenticated {
+			failures = append(failures, remote.Name+": account is not authenticated")
+			continue
+		}
+		if hookErr := install.InstallClaudeHooks(account.ProfileDir, s.binary); hookErr != nil {
+			failures = append(failures, remote.Name+": "+hookErr.Error())
+			continue
+		}
+		if startErr := s.claude.Activate(ctx, workerSpec(remote)); startErr != nil {
+			failures = append(failures, remote.Name+": "+startErr.Error())
 		}
 	}
+	if len(failures) > 0 {
+		return errors.New("could not restore " + strings.Join(failures, "; "))
+	}
 	return nil
+}
+
+func workerSpec(remote model.RemoteSession) claude.WorkerSpec {
+	return claude.WorkerSpec{
+		ID:              remote.ID,
+		AccountID:       remote.AccountID,
+		Workspace:       remote.WorkspacePath,
+		Name:            remote.Name,
+		ResumeSessionID: remote.ResumeSessionID,
+	}
 }
 
 func (s *Server) index(response http.ResponseWriter, _ *http.Request) {
@@ -145,6 +171,13 @@ func (s *Server) state(response http.ResponseWriter, request *http.Request) {
 		writeError(response, err, http.StatusInternalServerError)
 		return
 	}
+	remotes, err := s.store.ListRemoteSessions(request.Context())
+	if err != nil {
+		writeError(response, err, http.StatusInternalServerError)
+		return
+	}
+	s.decorateRemoteSessions(remotes)
+	decorateAccountActivity(accounts, remotes)
 	decorateSessions(sessions, accounts)
 	health := systemstate.Inspect(request.Context(), s.layout.CodexHooks, s.layout.CodexHookVerified, s.layout.Binary)
 	powerWarning := ""
@@ -152,10 +185,11 @@ func (s *Server) state(response http.ResponseWriter, request *http.Request) {
 		powerWarning = "This Mac is on battery and may become unreachable."
 	}
 	writeJSON(response, http.StatusOK, map[string]any{
-		"accounts":   accounts,
-		"workspaces": workspaces,
-		"sessions":   sessions,
-		"worker":     s.claude.Status(),
+		"accounts":       accounts,
+		"workspaces":     workspaces,
+		"sessions":       sessions,
+		"remoteSessions": remotes,
+		"runningCount":   s.claude.RunningCount(),
 		"system": map[string]any{
 			"tailnetOnly":     health.TailnetOnly,
 			"serveReady":      health.ServeReady,
@@ -171,6 +205,31 @@ func (s *Server) state(response http.ResponseWriter, request *http.Request) {
 			"startedAt":       s.started,
 		},
 	})
+}
+
+// decorateRemoteSessions attaches live worker state to each stored slot.
+func (s *Server) decorateRemoteSessions(remotes []model.RemoteSession) {
+	for index := range remotes {
+		remote := &remotes[index]
+		remote.Worker = s.claude.Status(remote.ID)
+		if remote.Worker.Name == "" {
+			remote.Worker.Name = remote.Name
+		}
+	}
+}
+
+// decorateAccountActivity reports an account as active when at least one of its
+// remote sessions is running. Several accounts can be active at once.
+func decorateAccountActivity(accounts []model.Account, remotes []model.RemoteSession) {
+	running := make(map[string]bool, len(remotes))
+	for _, remote := range remotes {
+		if remote.Worker.Running {
+			running[remote.AccountID] = true
+		}
+	}
+	for index := range accounts {
+		accounts[index].Active = running[accounts[index].ID]
+	}
 }
 
 func decorateSessions(sessions []model.Session, accounts []model.Account) {
@@ -251,74 +310,336 @@ func (s *Server) removeAccount(response http.ResponseWriter, request *http.Reque
 	writeJSON(response, http.StatusOK, map[string]any{"message": "Claude account removed."})
 }
 
-func (s *Server) activateAccount(response http.ResponseWriter, request *http.Request) {
+type remoteSessionRequest struct {
+	Name            string `json:"name"`
+	AccountID       string `json:"accountId"`
+	WorkspaceID     string `json:"workspaceId"`
+	ResumeSessionID string `json:"resumeSessionId"`
+	Force           bool   `json:"force"`
+}
+
+func (s *Server) createRemoteSession(response http.ResponseWriter, request *http.Request) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	var body struct {
-		WorkspaceID string `json:"workspaceId"`
-		Force       bool   `json:"force"`
-	}
+	var body remoteSessionRequest
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	workspace, err := s.store.GetWorkspace(request.Context(), body.WorkspaceID)
+	account, workspace, err := s.resolveRouting(request.Context(), body.AccountID, body.WorkspaceID)
 	if err != nil {
-		writeError(response, errors.New("workspace not found"), http.StatusNotFound)
+		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	worker := s.claude.Status()
-	activeSessions := s.activePromptedSessions(request.Context(), worker.AccountID, worker.WorkspacePath)
-	hasActiveTurn := len(activeSessions) > 0
-	if !body.Force && hasActiveTurn {
-		if err := s.claude.Deactivate(request.Context(), false); err != nil {
-			writeError(response, errors.New("the current Claude turn did not stop gracefully; confirm a forced switch"), http.StatusConflict)
-			return
-		}
-		for _, session := range s.activePromptedSessions(request.Context(), worker.AccountID, worker.WorkspacePath) {
-			if err := s.markSessionInterrupted(request.Context(), session); err != nil {
-				writeError(response, errors.New("could not checkpoint the stopped Claude turn"), http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-	if body.Force && hasActiveTurn {
-		for _, session := range activeSessions {
-			if err := s.markSessionInterrupted(request.Context(), session); err != nil {
-				writeError(response, err, http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-	if body.Force {
-		if err := s.claude.Deactivate(request.Context(), true); err != nil {
-			writeError(response, err, http.StatusConflict)
-			return
-		}
-	}
-	account, err := s.store.GetAccount(request.Context(), request.PathValue("id"))
+	resume, err := s.resolveResume(request.Context(), body.ResumeSessionID, account.ID, workspace.Path)
 	if err != nil {
-		writeError(response, errors.New("account not found"), http.StatusNotFound)
+		writeError(response, err, http.StatusBadRequest)
 		return
+	}
+	existing, err := s.store.ListRemoteSessions(request.Context())
+	if err != nil {
+		writeError(response, err, http.StatusInternalServerError)
+		return
+	}
+	remote, err := s.store.UpsertRemoteSession(request.Context(), model.RemoteSession{
+		Name:            uniqueSessionName(body.Name, account.Email, workspace, existing, ""),
+		AccountID:       account.ID,
+		WorkspaceID:     workspace.ID,
+		WorkspacePath:   workspace.Path,
+		ResumeSessionID: resume,
+		Desired:         model.DesiredRunning,
+	})
+	if err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.startRemote(request.Context(), remote, body.Force); err != nil {
+		_ = s.store.DeleteRemoteSession(request.Context(), remote.ID)
+		writeError(response, err, startFailureStatus(err))
+		return
+	}
+	_ = s.store.SelectWorkspace(request.Context(), workspace.ID)
+	writeJSON(response, http.StatusCreated, map[string]any{
+		"remoteSession": remote,
+		"message":       remote.Name + " is ready for Claude Remote Control.",
+	})
+}
+
+// updateRemoteSession moves a session to another account, workspace, or
+// conversation and restarts it so the change takes effect.
+func (s *Server) updateRemoteSession(response http.ResponseWriter, request *http.Request) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	var body remoteSessionRequest
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
+		return
+	}
+	accountID := remote.AccountID
+	if strings.TrimSpace(body.AccountID) != "" {
+		accountID = body.AccountID
+	}
+	workspaceID := remote.WorkspaceID
+	if strings.TrimSpace(body.WorkspaceID) != "" {
+		workspaceID = body.WorkspaceID
+	}
+	account, workspace, err := s.resolveRouting(request.Context(), accountID, workspaceID)
+	if err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	resume, err := s.resolveResume(request.Context(), body.ResumeSessionID, account.ID, workspace.Path)
+	if err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.stopRemote(request.Context(), remote, body.Force); err != nil {
+		writeError(response, err, stopFailureStatus(err))
+		return
+	}
+	existing, err := s.store.ListRemoteSessions(request.Context())
+	if err != nil {
+		writeError(response, err, http.StatusInternalServerError)
+		return
+	}
+	name := remote.Name
+	if strings.TrimSpace(body.Name) != "" || account.ID != remote.AccountID || workspace.ID != remote.WorkspaceID {
+		name = uniqueSessionName(body.Name, account.Email, workspace, existing, remote.ID)
+	}
+	remote.Name = name
+	remote.AccountID = account.ID
+	remote.WorkspaceID = workspace.ID
+	remote.WorkspacePath = workspace.Path
+	remote.ResumeSessionID = resume
+	remote.Desired = model.DesiredRunning
+	remote, err = s.store.UpsertRemoteSession(request.Context(), remote)
+	if err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.startRemote(request.Context(), remote, true); err != nil {
+		writeError(response, err, startFailureStatus(err))
+		return
+	}
+	_ = s.store.SelectWorkspace(request.Context(), workspace.ID)
+	writeJSON(response, http.StatusOK, map[string]any{
+		"remoteSession": remote,
+		"message":       remote.Name + " restarted with the new settings.",
+	})
+}
+
+func (s *Server) startRemoteSession(response http.ResponseWriter, request *http.Request) {
+	s.remoteSessionLifecycle(response, request, false)
+}
+
+func (s *Server) restartRemoteSession(response http.ResponseWriter, request *http.Request) {
+	s.remoteSessionLifecycle(response, request, true)
+}
+
+func (s *Server) remoteSessionLifecycle(response http.ResponseWriter, request *http.Request, restart bool) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	var body remoteSessionRequest
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
+		return
+	}
+	if restart {
+		if err := s.stopRemote(request.Context(), remote, body.Force); err != nil {
+			writeError(response, err, stopFailureStatus(err))
+			return
+		}
+	}
+	remote, err = s.store.SetRemoteSessionDesired(request.Context(), remote.ID, model.DesiredRunning)
+	if err != nil {
+		writeError(response, err, http.StatusInternalServerError)
+		return
+	}
+	if err := s.startRemote(request.Context(), remote, restart || body.Force); err != nil {
+		writeError(response, err, startFailureStatus(err))
+		return
+	}
+	verb := "started"
+	if restart {
+		verb = "restarted"
+	}
+	writeJSON(response, http.StatusOK, map[string]any{
+		"remoteSession": remote,
+		"message":       remote.Name + " " + verb + ".",
+	})
+}
+
+func (s *Server) stopRemoteSession(response http.ResponseWriter, request *http.Request) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	var body remoteSessionRequest
+	if err := decodeJSON(request, &body); err != nil {
+		writeError(response, err, http.StatusBadRequest)
+		return
+	}
+	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
+		return
+	}
+	if err := s.stopRemote(request.Context(), remote, body.Force); err != nil {
+		writeError(response, err, stopFailureStatus(err))
+		return
+	}
+	if _, err := s.store.SetRemoteSessionDesired(request.Context(), remote.ID, model.DesiredStopped); err != nil {
+		writeError(response, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"message": remote.Name + " stopped. Its checkpoints are kept."})
+}
+
+func (s *Server) deleteRemoteSession(response http.ResponseWriter, request *http.Request) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
+		return
+	}
+	if err := s.stopRemote(request.Context(), remote, true); err != nil {
+		writeError(response, err, stopFailureStatus(err))
+		return
+	}
+	if err := s.store.DeleteRemoteSession(request.Context(), remote.ID); err != nil {
+		writeError(response, err, http.StatusNotFound)
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]any{"message": remote.Name + " removed. Its checkpoints are kept."})
+}
+
+// startRemote installs the account's hooks and hands the slot to the Claude
+// manager. Other slots keep running.
+func (s *Server) startRemote(ctx context.Context, remote model.RemoteSession, force bool) error {
+	account, err := s.store.GetAccount(ctx, remote.AccountID)
+	if err != nil {
+		return errors.New("account not found")
 	}
 	if err := install.InstallClaudeHooks(account.ProfileDir, s.binary); err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
+		return err
 	}
-	if err := s.claude.Activate(request.Context(), account.ID, workspace.Path, "Vibe Remote · "+account.Email); err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, claude.ErrStopTimeout) {
-			status = http.StatusConflict
+	spec := workerSpec(remote)
+	spec.Force = force
+	return s.claude.Activate(ctx, spec)
+}
+
+// stopRemote stops one slot, checkpointing any Claude turn that was still
+// running so no captured work is lost.
+func (s *Server) stopRemote(ctx context.Context, remote model.RemoteSession, force bool) error {
+	worker := s.claude.Status(remote.ID)
+	if worker.State == "stopped" && !worker.Running {
+		return nil
+	}
+	active := s.activePromptedSessions(ctx, remote.AccountID, remote.WorkspacePath)
+	if err := s.claude.Deactivate(ctx, remote.ID, force); err != nil {
+		if errors.Is(err, claude.ErrStopTimeout) && !force {
+			return errors.New("this session has an unfinished Claude turn; confirm a forced stop")
 		}
-		writeError(response, err, status)
-		return
+		return err
 	}
-	if err := s.markActive(request.Context(), account.ID, workspace.ID); err != nil {
-		_ = s.claude.Deactivate(context.Background(), true)
-		writeError(response, err, http.StatusInternalServerError)
-		return
+	for _, session := range active {
+		if err := s.markSessionInterrupted(ctx, session); err != nil {
+			return errors.New("could not checkpoint the stopped Claude turn")
+		}
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"message": account.Email + " is ready for Claude Remote Control."})
+	return nil
+}
+
+func (s *Server) resolveRouting(ctx context.Context, accountID, workspaceID string) (model.Account, model.Workspace, error) {
+	account, err := s.store.GetAccount(ctx, accountID)
+	if err != nil {
+		return model.Account{}, model.Workspace{}, errors.New("account not found")
+	}
+	if account.Status != model.AccountAuthenticated {
+		return model.Account{}, model.Workspace{}, errors.New("this Claude account is not authenticated")
+	}
+	workspace, err := s.store.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return model.Account{}, model.Workspace{}, errors.New("workspace not found")
+	}
+	return account, workspace, nil
+}
+
+// resolveResume accepts a stored checkpoint ID or a native Claude session ID and
+// returns the native ID to resume. An empty value starts a new conversation.
+func (s *Server) resolveResume(ctx context.Context, requested, accountID, workspacePath string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", nil
+	}
+	session, err := s.store.GetSession(ctx, requested)
+	if err != nil {
+		return "", errors.New("that checkpoint is no longer available")
+	}
+	if session.Provider != model.ProviderClaude {
+		return "", errors.New("only Claude checkpoints can be resumed here")
+	}
+	if session.AccountID != accountID {
+		return "", errors.New("that conversation belongs to another Claude account")
+	}
+	if canonicalWorkspace(session.WorkspacePath) != canonicalWorkspace(workspacePath) {
+		return "", errors.New("that conversation belongs to another workspace")
+	}
+	return session.NativeSessionID, nil
+}
+
+func canonicalWorkspace(path string) string {
+	return filepath.Clean(strings.TrimSpace(path))
+}
+
+// uniqueSessionName keeps every Remote Control name distinct so the phone can
+// tell parallel sessions apart.
+func uniqueSessionName(requested, email string, workspace model.Workspace, existing []model.RemoteSession, skipID string) string {
+	base := strings.Join(strings.Fields(requested), " ")
+	if base == "" {
+		label := workspace.Label
+		if strings.TrimSpace(label) == "" {
+			label = filepath.Base(workspace.Path)
+		}
+		base = "Vibe Remote · " + email + " · " + label
+	}
+	if len(base) > 90 {
+		base = strings.TrimSpace(base[:90])
+	}
+	taken := make(map[string]bool, len(existing))
+	for _, remote := range existing {
+		if remote.ID != skipID {
+			taken[remote.Name] = true
+		}
+	}
+	candidate := base
+	for attempt := 2; taken[candidate]; attempt++ {
+		candidate = fmt.Sprintf("%s (%d)", base, attempt)
+	}
+	return candidate
+}
+
+func startFailureStatus(err error) int {
+	if errors.Is(err, claude.ErrStopTimeout) {
+		return http.StatusConflict
+	}
+	return http.StatusBadRequest
+}
+
+func stopFailureStatus(err error) int {
+	if errors.Is(err, claude.ErrStopTimeout) || strings.Contains(err.Error(), "forced stop") {
+		return http.StatusConflict
+	}
+	return http.StatusBadRequest
 }
 
 func (s *Server) refreshAccount(response http.ResponseWriter, request *http.Request) {
@@ -395,22 +716,8 @@ func (s *Server) createHandoff(response http.ResponseWriter, request *http.Reque
 			writeError(response, errors.New("destination Claude account is not authenticated"), http.StatusBadRequest)
 			return
 		}
-		worker := s.claude.Status()
-		if active := s.activePromptedSessions(request.Context(), worker.AccountID, worker.WorkspacePath); len(active) > 0 {
-			writeError(response, errors.New("the current Claude account has an unfinished turn; finish it or switch with force first"), http.StatusConflict)
-			return
-		}
-		if err := install.InstallClaudeHooks(account.ProfileDir, s.binary); err != nil {
-			writeError(response, err, http.StatusInternalServerError)
-			return
-		}
-		if err := s.claude.Activate(request.Context(), account.ID, session.WorkspacePath, "Vibe Remote · "+account.Email); err != nil {
+		if err := s.ensureRemoteSession(request.Context(), account, session.WorkspacePath); err != nil {
 			writeError(response, err, http.StatusConflict)
-			return
-		}
-		if err := s.markActiveByPath(request.Context(), account.ID, session.WorkspacePath); err != nil {
-			_ = s.claude.Deactivate(context.Background(), true)
-			writeError(response, err, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -493,11 +800,9 @@ func (s *Server) markSessionInterrupted(ctx context.Context, session model.Sessi
 	return s.store.InterruptSession(ctx, session.ID, snapshot, time.Now().UTC())
 }
 
-func (s *Server) markActive(ctx context.Context, accountID, workspaceID string) error {
-	return s.store.SetActiveRouting(ctx, accountID, workspaceID)
-}
-
-func (s *Server) markActiveByPath(ctx context.Context, accountID, workspacePath string) error {
+// ensureRemoteSession guarantees the destination account has a running Remote
+// Control session in this workspace, reusing one when it already exists.
+func (s *Server) ensureRemoteSession(ctx context.Context, account model.Account, workspacePath string) error {
 	workspace, err := s.store.GetWorkspaceByPath(ctx, workspacePath)
 	if err != nil {
 		workspace, err = s.store.UpsertWorkspace(ctx, model.Workspace{Label: filepath.Base(workspacePath), Path: workspacePath, Selected: true})
@@ -505,7 +810,37 @@ func (s *Server) markActiveByPath(ctx context.Context, accountID, workspacePath 
 			return err
 		}
 	}
-	return s.markActive(ctx, accountID, workspace.ID)
+	remotes, err := s.store.ListRemoteSessions(ctx)
+	if err != nil {
+		return err
+	}
+	for _, remote := range remotes {
+		if remote.AccountID != account.ID || canonicalWorkspace(remote.WorkspacePath) != canonicalWorkspace(workspace.Path) {
+			continue
+		}
+		if s.claude.Status(remote.ID).Running {
+			return nil
+		}
+		if _, err := s.store.SetRemoteSessionDesired(ctx, remote.ID, model.DesiredRunning); err != nil {
+			return err
+		}
+		return s.startRemote(ctx, remote, false)
+	}
+	remote, err := s.store.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name:          uniqueSessionName("", account.Email, workspace, remotes, ""),
+		AccountID:     account.ID,
+		WorkspaceID:   workspace.ID,
+		WorkspacePath: workspace.Path,
+		Desired:       model.DesiredRunning,
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.startRemote(ctx, remote, false); err != nil {
+		_ = s.store.DeleteRemoteSession(ctx, remote.ID)
+		return err
+	}
+	return nil
 }
 
 func selectedWorkspace(workspaces []model.Workspace) model.Workspace {

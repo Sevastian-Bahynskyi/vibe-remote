@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/claude"
+	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/model"
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/paths"
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/store"
 )
@@ -110,4 +111,50 @@ func (inertRunner) Output(context.Context, claude.Command) ([]byte, error) {
 }
 func (inertRunner) Start(claude.Command) (claude.Process, error) {
 	return nil, context.Canceled
+}
+
+func TestUniqueSessionNameKeepsParallelSessionsDistinct(t *testing.T) {
+	t.Parallel()
+	workspace := model.Workspace{Label: "Admin panel", Path: "/Users/me/admin"}
+	existing := []model.RemoteSession{
+		{ID: "one", Name: "Vibe Remote · person@example.com · Admin panel"},
+		{ID: "two", Name: "Vibe Remote · person@example.com · Admin panel (2)"},
+	}
+	got := uniqueSessionName("", "person@example.com", workspace, existing, "")
+	if got != "Vibe Remote · person@example.com · Admin panel (3)" {
+		t.Fatalf("generated name = %q", got)
+	}
+	if renamed := uniqueSessionName("", "person@example.com", workspace, existing, "one"); renamed != "Vibe Remote · person@example.com · Admin panel" {
+		t.Fatalf("a session may reuse its own name: %q", renamed)
+	}
+	if custom := uniqueSessionName("  Nightly   fixes ", "person@example.com", workspace, existing, ""); custom != "Nightly fixes" {
+		t.Fatalf("custom name = %q", custom)
+	}
+}
+
+func TestResolveResumeRejectsForeignConversations(t *testing.T) {
+	t.Parallel()
+	service := newTestServer(t)
+	ctx := context.Background()
+	session, err := service.store.UpsertSession(ctx, model.Session{
+		Provider: model.ProviderClaude, NativeSessionID: "native-1", AccountID: "account-a",
+		WorkspacePath: "/Users/me/admin", State: model.SessionStopped,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resume, err := service.resolveResume(ctx, session.ID, "account-a", "/Users/me/admin")
+	if err != nil || resume != "native-1" {
+		t.Fatalf("resolveResume() = %q, %v", resume, err)
+	}
+	if _, err := service.resolveResume(ctx, session.ID, "account-b", "/Users/me/admin"); err == nil {
+		t.Fatal("a conversation from another account was accepted")
+	}
+	if _, err := service.resolveResume(ctx, session.ID, "account-a", "/Users/me/other"); err == nil {
+		t.Fatal("a conversation from another workspace was accepted")
+	}
+	if resume, err := service.resolveResume(ctx, "", "account-a", "/Users/me/admin"); err != nil || resume != "" {
+		t.Fatalf("an empty request must start a new conversation: %q, %v", resume, err)
+	}
 }

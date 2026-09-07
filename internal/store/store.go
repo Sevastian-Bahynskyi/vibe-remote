@@ -343,23 +343,14 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
 	return deleteByID(ctx, s.db, "workspaces", id)
 }
 
-func (s *Store) SetActiveRouting(ctx context.Context, accountID, workspaceID string) error {
+func (s *Store) SelectWorkspace(ctx context.Context, workspaceID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin active routing update: %w", err)
+		return fmt.Errorf("begin workspace selection: %w", err)
 	}
 	defer tx.Rollback()
-	if err := requireRow(ctx, tx, "accounts", accountID); err != nil {
-		return err
-	}
 	if err := requireRow(ctx, tx, "workspaces", workspaceID); err != nil {
 		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET active = 0 WHERE active = 1`); err != nil {
-		return fmt.Errorf("clear active account: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET active = 1 WHERE id = ?`, accountID); err != nil {
-		return fmt.Errorf("set active account: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE workspaces SET selected = 0 WHERE selected = 1`); err != nil {
 		return fmt.Errorf("clear selected workspace: %w", err)
@@ -368,9 +359,102 @@ func (s *Store) SetActiveRouting(ctx context.Context, accountID, workspaceID str
 		return fmt.Errorf("set selected workspace: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit active routing update: %w", err)
+		return fmt.Errorf("commit workspace selection: %w", err)
 	}
 	return nil
+}
+
+// UpsertRemoteSession stores one Remote Control session slot. Several slots may
+// exist at once; each one names the account, workspace, and optional Claude
+// conversation it resumes.
+func (s *Store) UpsertRemoteSession(ctx context.Context, session model.RemoteSession) (model.RemoteSession, error) {
+	if strings.TrimSpace(session.AccountID) == "" {
+		return model.RemoteSession{}, errors.New("remote session account is required")
+	}
+	session.WorkspacePath = canonicalPath(strings.TrimSpace(session.WorkspacePath))
+	if session.WorkspacePath == "." || session.WorkspacePath == "" {
+		return model.RemoteSession{}, errors.New("remote session workspace is required")
+	}
+	if strings.TrimSpace(session.ID) == "" {
+		session.ID = newID("rs")
+	}
+	if session.Desired != model.DesiredRunning && session.Desired != model.DesiredStopped {
+		session.Desired = model.DesiredRunning
+	}
+	now := s.now().UTC()
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	session.UpdatedAt = now
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO remote_sessions (id, name, account_id, workspace_id, workspace_path, resume_session_id, desired, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			account_id = excluded.account_id,
+			workspace_id = excluded.workspace_id,
+			workspace_path = excluded.workspace_path,
+			resume_session_id = excluded.resume_session_id,
+			desired = excluded.desired,
+			updated_at = excluded.updated_at`,
+		session.ID, strings.TrimSpace(session.Name), session.AccountID, session.WorkspaceID,
+		session.WorkspacePath, strings.TrimSpace(session.ResumeSessionID), session.Desired,
+		formatTime(session.CreatedAt), formatTime(session.UpdatedAt),
+	)
+	if err != nil {
+		return model.RemoteSession{}, fmt.Errorf("upsert remote session: %w", err)
+	}
+	return s.GetRemoteSession(ctx, session.ID)
+}
+
+func (s *Store) GetRemoteSession(ctx context.Context, id string) (model.RemoteSession, error) {
+	row := s.db.QueryRowContext(ctx, remoteSessionSelect+` WHERE id = ?`, id)
+	return scanRemoteSession(row)
+}
+
+func (s *Store) ListRemoteSessions(ctx context.Context) ([]model.RemoteSession, error) {
+	rows, err := s.db.QueryContext(ctx, remoteSessionSelect+` ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list remote sessions: %w", err)
+	}
+	defer rows.Close()
+
+	sessions := make([]model.RemoteSession, 0)
+	for rows.Next() {
+		session, scanErr := scanRemoteSession(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list remote session rows: %w", err)
+	}
+	return sessions, nil
+}
+
+func (s *Store) SetRemoteSessionDesired(ctx context.Context, id, desired string) (model.RemoteSession, error) {
+	if desired != model.DesiredRunning && desired != model.DesiredStopped {
+		return model.RemoteSession{}, errors.New("remote session state must be running or stopped")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE remote_sessions SET desired = ?, updated_at = ? WHERE id = ?`,
+		desired, formatTime(s.now().UTC()), id)
+	if err != nil {
+		return model.RemoteSession{}, fmt.Errorf("update remote session state: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return model.RemoteSession{}, fmt.Errorf("read remote session update count: %w", err)
+	}
+	if changed == 0 {
+		return model.RemoteSession{}, ErrNotFound
+	}
+	return s.GetRemoteSession(ctx, id)
+}
+
+func (s *Store) DeleteRemoteSession(ctx context.Context, id string) error {
+	return deleteByID(ctx, s.db, "remote_sessions", id)
 }
 
 func requireRow(ctx context.Context, tx *sql.Tx, table, id string) error {
@@ -880,8 +964,34 @@ const sessionSelect = `
 		branch, head_sha, state, pinned, last_prompt, updated_at
 	FROM sessions`
 
+const remoteSessionSelect = `
+	SELECT id, name, account_id, workspace_id, workspace_path, resume_session_id, desired, created_at, updated_at
+	FROM remote_sessions`
+
 type scanner interface {
 	Scan(dest ...any) error
+}
+
+func scanRemoteSession(row scanner) (model.RemoteSession, error) {
+	var session model.RemoteSession
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&session.ID, &session.Name, &session.AccountID, &session.WorkspaceID,
+		&session.WorkspacePath, &session.ResumeSessionID, &session.Desired, &createdAt, &updatedAt,
+	); err != nil {
+		return model.RemoteSession{}, normalizeScanError("scan remote session", err)
+	}
+	var err error
+	session.CreatedAt, err = parseTime(createdAt)
+	if err != nil {
+		return model.RemoteSession{}, fmt.Errorf("parse remote session created time: %w", err)
+	}
+	session.UpdatedAt, err = parseTime(updatedAt)
+	if err != nil {
+		return model.RemoteSession{}, fmt.Errorf("parse remote session updated time: %w", err)
+	}
+	return session, nil
 }
 
 func scanAccount(row scanner) (model.Account, error) {

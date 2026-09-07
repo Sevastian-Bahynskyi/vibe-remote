@@ -20,9 +20,16 @@ const elements = {
   notice: document.querySelector('#notice'),
   powerWarningText: document.querySelector('#power-warning-text'),
   refreshButton: document.querySelector('#refresh-button'),
+  remoteSessionAccount: document.querySelector('#remote-session-account'),
+  remoteSessionConversation: document.querySelector('#remote-session-conversation'),
+  remoteSessionForm: document.querySelector('#remote-session-form'),
+  remoteSessionName: document.querySelector('#remote-session-name'),
+  remoteSessionWorkspace: document.querySelector('#remote-session-workspace'),
+  remoteSessionsList: document.querySelector('#remote-sessions-list'),
   sessionCount: document.querySelector('#session-count'),
   sessionsList: document.querySelector('#sessions-list'),
   showAccountForm: document.querySelector('#show-account-form'),
+  showRemoteSessionForm: document.querySelector('#show-remote-session-form'),
   showWorkspaceForm: document.querySelector('#show-workspace-form'),
   tailnetStatus: document.querySelector('#tailnet-status'),
   workerDetail: document.querySelector('#worker-detail'),
@@ -30,7 +37,6 @@ const elements = {
   workspaceForm: document.querySelector('#workspace-form'),
   workspaceLabel: document.querySelector('#workspace-label'),
   workspacePath: document.querySelector('#workspace-path'),
-  workspaceSelect: document.querySelector('#workspace-select'),
   workspacesList: document.querySelector('#workspaces-list'),
 };
 
@@ -40,7 +46,7 @@ let noticeTimer = 0;
 let loading = false;
 
 function emptyState() {
-  return { accounts: [], workspaces: [], sessions: [], worker: {}, system: {} };
+  return { accounts: [], workspaces: [], sessions: [], remoteSessions: [], runningCount: 0, system: {} };
 }
 
 function createElement(tagName, options = {}, children = []) {
@@ -82,6 +88,18 @@ function sentenceCase(value) {
 function firstDefined(object, keys) {
   if (!object || typeof object !== 'object') return undefined;
   return keys.map((key) => object[key]).find((value) => value !== undefined && value !== null);
+}
+
+function isClaudeRemoteURL(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:'
+      && (parsed.hostname === 'claude.ai' || parsed.hostname === 'claude.com')
+      && (parsed.pathname === '/code' || parsed.pathname === '/code/' || parsed.pathname.startsWith('/code/'));
+  } catch (error) {
+    return false;
+  }
 }
 
 function humanTime(value) {
@@ -204,18 +222,20 @@ function toneForStatus(status) {
 }
 
 function renderSystem() {
-  const worker = dashboardState.worker || {};
   const system = dashboardState.system || {};
-  const activeAccount = dashboardState.accounts.find((account) => account.id === worker.accountId);
-  const workerState = worker.running ? safeText(worker.state, 'Running') : safeText(worker.state, 'Stopped');
+  const sessions = dashboardState.remoteSessions;
+  const running = sessions.filter((session) => session.worker && session.worker.running);
+  const failed = sessions.filter((session) => session.worker && session.worker.lastError && !session.worker.running);
 
-  elements.workerStatus.textContent = sentenceCase(workerState);
-  elements.workerStatus.dataset.tone = worker.running ? 'good' : worker.lastError ? 'bad' : 'neutral';
-  if (worker.running) {
-    const owner = activeAccount ? activeAccount.email : worker.accountId;
-    elements.workerDetail.textContent = `Active for ${safeText(owner, 'an account')}${worker.pid ? ` · PID ${worker.pid}` : ''}`;
+  elements.workerStatus.textContent = sessions.length === 0 ? 'None' : `${running.length} of ${sessions.length} running`;
+  elements.workerStatus.dataset.tone = running.length > 0 ? 'good' : failed.length > 0 ? 'bad' : 'neutral';
+  if (running.length > 0) {
+    const names = running.map((session) => safeText(session.name, 'Unnamed session'));
+    elements.workerDetail.textContent = `Live: ${names.join(', ')}`;
+  } else if (sessions.length > 0) {
+    elements.workerDetail.textContent = safeText(failed[0]?.worker?.lastError, 'No session is connected right now.');
   } else {
-    elements.workerDetail.textContent = safeText(worker.lastError, 'No Claude worker is active.');
+    elements.workerDetail.textContent = 'No sessions yet. Start one to control Claude from your phone.';
   }
 
   const tailnetOnly = firstDefined(system, ['tailnetOnly', 'tailnet_only', 'isTailnetOnly']);
@@ -235,45 +255,305 @@ function renderSystem() {
   }
 }
 
-function renderWorkspaceSelect() {
-  const previousSelection = elements.workspaceSelect.value;
-  const options = [];
-  if (dashboardState.workspaces.length === 0) {
-    options.push(createElement('option', { text: 'Add a workspace first', attrs: { value: '' } }));
+function authenticatedAccounts() {
+  return dashboardState.accounts.filter((account) => account.status === 'authenticated');
+}
+
+function fillSelect(select, options, emptyLabel) {
+  const previous = select.value;
+  const nodes = [];
+  if (options.length === 0) {
+    nodes.push(createElement('option', { text: emptyLabel, attrs: { value: '' } }));
   } else {
-    dashboardState.workspaces.forEach((workspace) => {
-      const option = createElement('option', {
-        text: workspace.label || workspace.path,
-        attrs: { value: workspace.id },
-      });
-      if (workspace.id === previousSelection || (!previousSelection && workspace.selected)) option.selected = true;
-      options.push(option);
+    options.forEach((option) => {
+      const node = createElement('option', { text: option.label, attrs: { value: option.value } });
+      if (option.value === previous || (!previous && option.preferred)) node.selected = true;
+      nodes.push(node);
     });
   }
-  replaceChildren(elements.workspaceSelect, options);
+  replaceChildren(select, nodes);
+}
+
+function accountOptions() {
+  return authenticatedAccounts().map((account) => ({ value: account.id, label: safeText(account.email, 'Claude account') }));
+}
+
+function workspaceOptions() {
+  return dashboardState.workspaces.map((workspace) => ({
+    value: workspace.id,
+    label: safeText(workspace.label, workspace.path),
+    preferred: Boolean(workspace.selected),
+  }));
+}
+
+// Only Claude checkpoints from the same account and workspace can be resumed,
+// so the conversation list follows the other two selects.
+function conversationOptions(accountId, workspacePath) {
+  return dashboardState.sessions
+    .filter((session) => session.provider === 'claude'
+      && session.accountId === accountId
+      && session.workspacePath === workspacePath)
+    .slice(0, 40)
+    .map((session) => ({
+      value: session.id,
+      label: `${safeText(session.title, 'Untitled conversation')} · ${humanTime(session.updatedAt)}`,
+    }));
+}
+
+function workspacePathFor(workspaceId) {
+  const workspace = dashboardState.workspaces.find((candidate) => candidate.id === workspaceId);
+  return workspace ? workspace.path : '';
+}
+
+function renderNewSessionForm() {
+  fillSelect(elements.remoteSessionAccount, accountOptions(), 'Add an authenticated account first');
+  fillSelect(elements.remoteSessionWorkspace, workspaceOptions(), 'Add a workspace first');
+  renderConversationSelect();
+}
+
+function renderConversationSelect() {
+  const previous = elements.remoteSessionConversation.value;
+  const options = conversationOptions(
+    elements.remoteSessionAccount.value,
+    workspacePathFor(elements.remoteSessionWorkspace.value),
+  );
+  const nodes = [createElement('option', { text: 'New conversation', attrs: { value: '' } })];
+  options.forEach((option) => {
+    const node = createElement('option', { text: option.label, attrs: { value: option.value } });
+    if (option.value === previous) node.selected = true;
+    nodes.push(node);
+  });
+  replaceChildren(elements.remoteSessionConversation, nodes);
+}
+
+function remoteSessionCard(session) {
+  const worker = session.worker || {};
+  const account = dashboardState.accounts.find((candidate) => candidate.id === session.accountId);
+  const workspace = dashboardState.workspaces.find((candidate) => candidate.id === session.workspaceId);
+  const running = Boolean(worker.running);
+  const workspaceLabel = safeText(workspace?.label, session.workspacePath);
+  const conversation = session.resumeSessionId ? `Resumes ${session.resumeSessionId}` : 'New conversation';
+
+  const card = createElement('article', { className: `item-card${running ? ' active-item' : ''}` });
+  card.append(createElement('div', { className: 'item-heading' }, [
+    createElement('div', {}, [
+      createElement('h3', { text: safeText(session.name, 'Unnamed session') }),
+      createElement('p', { className: 'item-detail', text: `${safeText(account?.email, 'Unknown account')} · ${workspaceLabel}` }),
+      createElement('p', { className: 'path-copy', text: safeText(session.workspacePath), title: safeText(session.workspacePath) }),
+      createElement('p', { className: 'item-detail', text: conversation, title: conversation }),
+    ]),
+    statusPill(running ? 'Running' : sentenceCase(safeText(worker.state, session.desired === 'stopped' ? 'stopped' : 'idle')), running ? 'good' : worker.lastError ? 'bad' : 'neutral'),
+  ]));
+  if (worker.lastError) card.append(createElement('p', { className: 'error-detail', text: worker.lastError }));
+
+  const actions = createElement('div', { className: 'item-actions' });
+  if (running && isClaudeRemoteURL(worker.remoteUrl)) {
+    actions.append(createElement('a', {
+      className: 'primary-button connect-button',
+      text: worker.remoteUrl === 'https://claude.ai/code' ? 'Open Claude' : 'Open live session',
+      attrs: { href: worker.remoteUrl, target: '_blank', rel: 'noopener noreferrer' },
+    }));
+  }
+
+  if (running) {
+    const restart = createElement('button', { className: 'secondary-button', text: 'Restart', type: 'button', title: 'Restart this session to apply changes' });
+    restart.addEventListener('click', () => remoteSessionLifecycle(session, 'restart', restart, false));
+    actions.append(restart);
+
+    const stop = createElement('button', { className: 'secondary-button', text: 'Stop', type: 'button' });
+    stop.addEventListener('click', () => remoteSessionLifecycle(session, 'stop', stop, false));
+    actions.append(stop);
+  } else {
+    const start = createElement('button', { className: 'primary-button', text: 'Start', type: 'button' });
+    start.addEventListener('click', () => remoteSessionLifecycle(session, 'start', start, false));
+    actions.append(start);
+  }
+
+  const editForm = buildRemoteSessionEditor(session);
+  const edit = createElement('button', {
+    className: 'secondary-button', text: 'Move / edit', type: 'button',
+    attrs: { 'aria-expanded': 'false' },
+  });
+  edit.addEventListener('click', () => {
+    const willShow = editForm.hidden;
+    editForm.hidden = !willShow;
+    edit.setAttribute('aria-expanded', String(willShow));
+    edit.textContent = willShow ? 'Cancel' : 'Move / edit';
+  });
+  actions.append(edit);
+
+  const remove = createElement('button', { className: 'danger-text-button', text: 'Remove', type: 'button' });
+  remove.addEventListener('click', () => {
+    openConfirmation({
+      title: 'Remove this session?',
+      message: `${safeText(session.name, 'This session')} will be stopped and removed. Its captured checkpoints are kept.`,
+      confirmLabel: 'Remove session',
+      action: async () => {
+        await runMutation(remove, `/api/remote-sessions/${encodeURIComponent(session.id)}`, { method: 'DELETE' }, 'Session removed.');
+      },
+    });
+  });
+  actions.append(remove);
+
+  card.append(actions, editForm);
+  return card;
+}
+
+// The editor moves a live session to another account, workspace, or
+// conversation; saving restarts the session so the change takes effect.
+function buildRemoteSessionEditor(session) {
+  const form = createElement('form', { className: 'inline-form' });
+  form.hidden = true;
+
+  const accountSelect = createElement('select', { attrs: { id: `edit-account-${session.id}` } });
+  const workspaceSelect = createElement('select', { attrs: { id: `edit-workspace-${session.id}` } });
+  const conversationSelect = createElement('select', { attrs: { id: `edit-conversation-${session.id}` } });
+  const nameInput = createElement('input', { attrs: { id: `edit-name-${session.id}`, type: 'text', autocomplete: 'off' } });
+  nameInput.value = safeText(session.name, '');
+
+  const accounts = accountOptions();
+  replaceChildren(accountSelect, accounts.map((option) => {
+    const node = createElement('option', { text: option.label, attrs: { value: option.value } });
+    if (option.value === session.accountId) node.selected = true;
+    return node;
+  }));
+  replaceChildren(workspaceSelect, workspaceOptions().map((option) => {
+    const node = createElement('option', { text: option.label, attrs: { value: option.value } });
+    if (option.value === session.workspaceId) node.selected = true;
+    return node;
+  }));
+
+  const fillConversations = () => {
+    const options = conversationOptions(accountSelect.value, workspacePathFor(workspaceSelect.value));
+    const nodes = [createElement('option', { text: 'New conversation', attrs: { value: '' } })];
+    options.forEach((option) => {
+      const node = createElement('option', { text: option.label, attrs: { value: option.value } });
+      nodes.push(node);
+    });
+    replaceChildren(conversationSelect, nodes);
+  };
+  fillConversations();
+  accountSelect.addEventListener('change', fillConversations);
+  workspaceSelect.addEventListener('change', fillConversations);
+
+  const save = createElement('button', { className: 'primary-button', text: 'Save & restart', type: 'submit' });
+  form.append(
+    createElement('div', { className: 'field-group' }, [
+      createElement('label', { text: 'Claude account', attrs: { for: accountSelect.id } }), accountSelect,
+    ]),
+    createElement('div', { className: 'field-group' }, [
+      createElement('label', { text: 'Workspace', attrs: { for: workspaceSelect.id } }), workspaceSelect,
+    ]),
+    createElement('div', { className: 'field-group' }, [
+      createElement('label', { text: 'Conversation', attrs: { for: conversationSelect.id } }), conversationSelect,
+    ]),
+    createElement('label', { text: 'Name shown in the Claude app', attrs: { for: nameInput.id } }),
+    createElement('div', { className: 'form-row' }, [nameInput, save]),
+  );
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await moveRemoteSession(session, {
+      accountId: accountSelect.value,
+      workspaceId: workspaceSelect.value,
+      resumeSessionId: conversationSelect.value,
+      name: nameInput.value.trim(),
+    }, save, false);
+  });
+  return form;
+}
+
+async function moveRemoteSession(session, body, button, force) {
+  setButtonBusy(button, true, 'Restarting…');
+  try {
+    const payload = await apiRequest(`/api/remote-sessions/${encodeURIComponent(session.id)}`, {
+      method: 'PATCH',
+      body: { ...body, force },
+    });
+    showNotice(safeText(payload?.message, 'Session updated.'));
+    await loadState({ quiet: true });
+  } catch (error) {
+    if (error.status === 409 && !force) {
+      openConfirmation({
+        title: 'Force restart?',
+        message: `${error.message} Forcing it stops the running Claude turn.`,
+        confirmLabel: 'Force restart',
+        danger: false,
+        action: async () => moveRemoteSession(session, body, button, true),
+      });
+    } else {
+      showNotice(error.message, 'error', true);
+    }
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function remoteSessionLifecycle(session, action, button, force) {
+  const labels = { start: 'Starting…', restart: 'Restarting…', stop: 'Stopping…' };
+  setButtonBusy(button, true, labels[action]);
+  try {
+    const payload = await apiRequest(`/api/remote-sessions/${encodeURIComponent(session.id)}/${action}`, {
+      method: 'POST',
+      body: { force },
+    });
+    showNotice(safeText(payload?.message, 'Session updated.'));
+    await loadState({ quiet: true });
+  } catch (error) {
+    if (error.status === 409 && !force) {
+      openConfirmation({
+        title: 'Force this change?',
+        message: `${error.message} Forcing it stops the running Claude turn.`,
+        confirmLabel: 'Force',
+        danger: false,
+        action: async () => remoteSessionLifecycle(session, action, button, true),
+      });
+    } else {
+      showNotice(error.message, 'error', true);
+    }
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+function renderRemoteSessions() {
+  if (dashboardState.remoteSessions.length === 0) {
+    replaceChildren(elements.remoteSessionsList, [emptyMessage(
+      'No remote sessions yet.',
+      'Tap New to start one. You can run as many as you need, side by side.',
+    )]);
+    return;
+  }
+  replaceChildren(elements.remoteSessionsList, dashboardState.remoteSessions.map(remoteSessionCard));
 }
 
 function accountCard(account) {
   const authenticated = account.status === 'authenticated';
+  const sessionCount = dashboardState.remoteSessions.filter((session) => session.accountId === account.id).length;
   const card = createElement('article', { className: `item-card${account.active ? ' active-item' : ''}` });
+  const detail = account.active
+    ? `Live in ${sessionCount === 1 ? '1 session' : `${sessionCount} sessions`}`
+    : authenticated
+      ? sessionCount > 0 ? `${sessionCount === 1 ? '1 session' : `${sessionCount} sessions`} configured` : 'Available for new sessions'
+      : 'Sign-in required';
   const heading = createElement('div', { className: 'item-heading' }, [
     createElement('div', {}, [
       createElement('h3', { text: safeText(account.email, 'Unnamed account') }),
-      createElement('p', { className: 'item-detail', text: account.active ? 'Active on this Mac' : authenticated ? 'Available to switch' : 'Sign-in required' }),
+      createElement('p', { className: 'item-detail', text: detail }),
     ]),
-    statusPill(account.active ? 'Active' : sentenceCase(account.status), account.active ? 'good' : toneForStatus(account.status)),
+    statusPill(account.active ? 'Live' : sentenceCase(account.status), account.active ? 'good' : toneForStatus(account.status)),
   ]);
 
   const actions = createElement('div', { className: 'item-actions' });
-  const activate = createElement('button', {
+  const newSession = createElement('button', {
     className: 'primary-button',
-    text: account.active ? 'Restart / move' : 'Activate',
+    text: 'New session',
     type: 'button',
-    disabled: !elements.workspaceSelect.value || !authenticated,
-    title: !authenticated ? 'Refresh and verify this sign-in first' : elements.workspaceSelect.value ? 'Start this Claude account in the selected workspace' : 'Choose a workspace first',
+    disabled: !authenticated,
+    title: authenticated ? 'Start another Remote Control session with this account' : 'Refresh and verify this sign-in first',
   });
-  activate.addEventListener('click', () => activateAccount(account, activate, false));
-  actions.append(activate);
+  newSession.addEventListener('click', () => openNewSessionForm(account.id));
+  actions.append(newSession);
 
   const refresh = createElement('button', { className: 'secondary-button', text: 'Refresh sign-in', type: 'button' });
   refresh.addEventListener('click', async () => {
@@ -287,7 +567,7 @@ function accountCard(account) {
   remove.addEventListener('click', () => {
     openConfirmation({
       title: 'Remove Claude account?',
-      message: `${safeText(account.email, 'This account')} will be removed from VIBE REMOTE.`,
+      message: `${safeText(account.email, 'This account')} and its ${sessionCount === 1 ? 'session' : 'sessions'} will be removed from Vibe Remote.`,
       optionLabel: 'Also delete its saved checkpoints',
       confirmLabel: 'Remove account',
       action: async (deleteCheckpoints) => {
@@ -303,37 +583,15 @@ function accountCard(account) {
   return card;
 }
 
-async function activateAccount(account, button, force) {
-  const workspaceId = elements.workspaceSelect.value;
-  if (!workspaceId) {
-    showNotice('Choose a workspace before switching accounts.', 'error', true);
-    elements.workspaceSelect.focus();
-    return;
+function openNewSessionForm(accountId) {
+  if (elements.remoteSessionForm.hidden) {
+    toggleForm(elements.remoteSessionForm, elements.showRemoteSessionForm, elements.remoteSessionAccount);
   }
-
-  setButtonBusy(button, true, force ? 'Forcing switch…' : 'Switching…');
-  try {
-    await apiRequest(`/api/accounts/${encodeURIComponent(account.id)}/activate`, {
-      method: 'POST',
-      body: { workspaceId, force },
-    });
-    showNotice(`${safeText(account.email, 'Claude account')} is active.`);
-    await loadState({ quiet: true });
-  } catch (error) {
-    if (error.status === 409 && !force) {
-      openConfirmation({
-        title: 'Force account switch?',
-        message: `${error.message} Forcing the switch may stop the active Claude worker.`,
-        confirmLabel: 'Force switch',
-        danger: false,
-        action: async () => activateAccount(account, button, true),
-      });
-    } else {
-      showNotice(error.message, 'error', true);
-    }
-  } finally {
-    setButtonBusy(button, false);
+  if (accountId) {
+    elements.remoteSessionAccount.value = accountId;
+    renderConversationSelect();
   }
+  elements.remoteSessionForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function renderAccounts() {
@@ -416,7 +674,7 @@ function checkpointCard(session) {
   actionArea.append(pinButton);
 
   if (session.resumeCommand) {
-    const copyButton = createElement('button', { className: 'secondary-button', text: 'Copy resume command', type: 'button' });
+    const copyButton = createElement('button', { className: 'secondary-button', text: 'Copy command', type: 'button' });
     copyButton.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(String(session.resumeCommand));
@@ -427,14 +685,14 @@ function checkpointCard(session) {
     });
     actionArea.append(copyButton);
   }
-  const codexButton = createElement('button', { className: 'primary-button', text: 'Continue with Codex', type: 'button' });
+  const codexButton = createElement('button', { className: 'primary-button', text: 'Continue in Codex', type: 'button' });
   codexButton.addEventListener('click', () => createHandoff(session, 'codex', '', codexButton));
   actionArea.append(codexButton);
 
   dashboardState.accounts.forEach((account) => {
     const button = createElement('button', {
       className: 'secondary-button',
-      text: `Continue with ${safeText(account.email, 'Claude')}`,
+      text: `Continue in ${safeText(account.email, 'Claude')}`,
       type: 'button',
       disabled: account.status !== 'authenticated',
       title: account.status === 'authenticated' ? `Continue using ${account.email}` : 'Authenticate this account first',
@@ -446,6 +704,11 @@ function checkpointCard(session) {
   if (dashboardState.accounts.length === 0) {
     actionArea.append(createElement('p', { className: 'muted-copy', text: 'Add a Claude account to hand this session to Claude.' }));
   }
+
+  const actionDisclosure = createElement('details', { className: 'checkpoint-actions' }, [
+    createElement('summary', { text: 'Actions' }),
+    actionArea,
+  ]);
 
   return createElement('article', { className: 'checkpoint-card' }, [
     createElement('div', { className: 'checkpoint-title-row' }, [
@@ -463,7 +726,7 @@ function checkpointCard(session) {
     details,
     session.sharedWorktree ? createElement('p', { className: 'error-detail', text: 'Multiple active sessions share these files. Review live changes before continuing.' }) : null,
     session.desktopGuidance ? createElement('p', { className: 'muted-copy', text: session.desktopGuidance }) : null,
-    actionArea,
+    actionDisclosure,
   ]);
 }
 
@@ -522,7 +785,8 @@ async function createHandoff(session, destinationProvider, destinationAccountId,
 
 function render() {
   renderSystem();
-  renderWorkspaceSelect();
+  renderNewSessionForm();
+  renderRemoteSessions();
   renderAccounts();
   renderWorkspaces();
   renderSessions();
@@ -541,7 +805,8 @@ async function loadState({ quiet = false } = {}) {
       accounts: asArray(payload?.accounts),
       workspaces: asArray(payload?.workspaces),
       sessions: asArray(payload?.sessions),
-      worker: payload?.worker && typeof payload.worker === 'object' ? payload.worker : {},
+      remoteSessions: asArray(payload?.remoteSessions),
+      runningCount: Number(payload?.runningCount) || 0,
       system: payload?.system && typeof payload.system === 'object' ? payload.system : {},
     };
     render();
@@ -563,11 +828,11 @@ async function loadState({ quiet = false } = {}) {
   }
 }
 
-function toggleForm(form, button, focusTarget) {
+function toggleForm(form, button, focusTarget, closedLabel = 'Add') {
   const willShow = form.hidden;
   form.hidden = !willShow;
   button.setAttribute('aria-expanded', String(willShow));
-  button.textContent = willShow ? 'Close' : 'Add';
+  button.textContent = willShow ? 'Close' : closedLabel;
   if (willShow) focusTarget.focus();
 }
 
@@ -591,6 +856,7 @@ elements.confirmDialog.addEventListener('close', async () => {
   }
 });
 
+elements.showRemoteSessionForm.addEventListener('click', () => toggleForm(elements.remoteSessionForm, elements.showRemoteSessionForm, elements.remoteSessionAccount, 'New'));
 elements.showAccountForm.addEventListener('click', () => toggleForm(elements.accountForm, elements.showAccountForm, elements.accountEmail));
 elements.showWorkspaceForm.addEventListener('click', () => toggleForm(elements.workspaceForm, elements.showWorkspaceForm, elements.workspaceLabel));
 elements.refreshButton.addEventListener('click', () => loadState());
@@ -624,7 +890,37 @@ elements.installHooksButton.addEventListener('click', async () => {
   await runMutation(elements.installHooksButton, '/api/install-hooks', { method: 'POST' }, 'Checkpoint hooks installed.');
 });
 
-elements.workspaceSelect.addEventListener('change', renderAccounts);
+elements.remoteSessionAccount.addEventListener('change', renderConversationSelect);
+elements.remoteSessionWorkspace.addEventListener('change', renderConversationSelect);
+
+elements.remoteSessionForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const accountId = elements.remoteSessionAccount.value;
+  const workspaceId = elements.remoteSessionWorkspace.value;
+  if (!accountId) {
+    showNotice('Add and authenticate a Claude account first.', 'error', true);
+    return;
+  }
+  if (!workspaceId) {
+    showNotice('Add a workspace under Settings first.', 'error', true);
+    return;
+  }
+  const button = elements.remoteSessionForm.querySelector('button[type="submit"]');
+  const payload = await runMutation(button, '/api/remote-sessions', {
+    method: 'POST',
+    body: {
+      accountId,
+      workspaceId,
+      resumeSessionId: elements.remoteSessionConversation.value,
+      name: elements.remoteSessionName.value.trim(),
+    },
+  }, 'Session started.');
+  if (payload) {
+    elements.remoteSessionName.value = '';
+    elements.remoteSessionConversation.value = '';
+    toggleForm(elements.remoteSessionForm, elements.showRemoteSessionForm, elements.remoteSessionAccount, 'New');
+  }
+});
 window.addEventListener('online', () => loadState());
 window.addEventListener('offline', () => {
   elements.connectionLabel.textContent = 'Phone offline';

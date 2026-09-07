@@ -5,7 +5,7 @@ Vibe Remote is a small macOS service for choosing which Claude subscription is a
 ## What it does
 
 - Stores any number of independently authenticated Claude Code profiles, labeled by email.
-- Runs exactly one managed `claude remote-control` server for the selected account and workspace.
+- Runs as many managed interactive Claude Remote Control sessions as you start, in parallel, each pinned to one account and workspace and each either a new conversation or an earlier one resumed by ID.
 - Exposes a mobile dashboard only through Tailscale Serve at `/vibe-remote/`; the app itself listens only on `127.0.0.1:47173`.
 - Captures provider-neutral session checkpoints from official Claude and Codex hooks without an LLM call.
 - Creates destination-scoped, 48-hour, one-use handoffs. Type exactly `continue` in the selected destination to inject the latest eight captured turns plus live Git state.
@@ -49,14 +49,18 @@ Open the URL shown by:
 2. Add each local workspace by absolute path.
 3. Before using a workspace remotely for the first time, run Claude locally in it with the desired profile and accept Claude's workspace trust prompt. Vibe Remote reports this explicitly if it is missing.
 4. In Codex, open `/hooks` once and trust the installed Vibe Remote hooks. The dashboard changes from `Installed · verify /hooks` to `Verified` after an actual hook event.
-5. Activate an account and workspace. The dashboard reports success only after Claude prints a registered Remote Control URL.
-6. On the phone, sign into the matching Claude account, open **Code**, and choose the session named `Vibe Remote · email@example.com`.
+5. Press **New** under **Remote sessions**, choose the account, the workspace, and either **New conversation** or an earlier Claude checkpoint to resume. The dashboard reports success only after Claude registers an interactive Remote Control bridge.
+6. On the phone, sign into the matching Claude account and tap **Open live session** on that card in the dashboard.
 
-## Switching accounts
+## Running and switching sessions
 
-Choose a workspace, then press **Activate** (or **Restart / move**) on the desired Claude account. Vibe Remote first requests a graceful stop. If active work does not stop, the dashboard asks before forcing it; every open session known to that worker is marked interrupted with a fresh Git snapshot before termination.
+Start as many sessions as you need. Each one gets a distinct Remote Control name — by default `Vibe Remote · <email> · <workspace>`, made unique with a numeric suffix — so parallel sessions are told apart in the Claude app. Starting, stopping, restarting, or removing one session never disturbs the others.
 
-Then switch the Claude mobile app to the same email and open its Vibe Remote session. Codex remains under Codex's own account/session management.
+**Move / edit** on a session card changes its account, workspace, conversation, or name and restarts it so the change takes effect. **Restart** reapplies the current settings in place. Both first request a graceful stop; if active work does not stop, the dashboard asks before forcing it, and every open checkpoint known to that worker is marked interrupted with a fresh Git snapshot before termination.
+
+Removing a session stops it and forgets the slot; its captured checkpoints are kept. Sessions that were running are restored automatically when the service restarts.
+
+Workspaces and session checkpoints live under **Settings**, collapsed by default.
 
 ## Handoff workflow
 
@@ -78,7 +82,7 @@ Remote Control keeps the full local Claude environment, including local MCP serv
 - Tailscale access control is the network authentication boundary.
 - Dashboard mutations require a same-origin custom header and responses use CSP, frame denial, no-referrer, and no-store headers.
 - Credentials stay in Claude-managed Keychain entries; Vibe Remote's database contains labels, profile paths, session metadata, and checkpoint text only.
-- Session URLs and OAuth output are discarded, never written to service logs.
+- The active Remote Control URL is held only in service memory and returned only through the tailnet-only dashboard API. OAuth output is discarded and never written to service logs.
 - Paths are validated before profile removal or workspace execution.
 - Existing Tailscale Serve routes are preserved; Vibe Remote owns only `/vibe-remote/`.
 
@@ -97,4 +101,4 @@ go test -race ./...
 go vet ./...
 ```
 
-If launchd is killed unexpectedly, Vibe Remote records its child PID and terminates only a matching stale `claude remote-control` process before restoring the selected worker.
+If launchd is killed unexpectedly, Vibe Remote records its child PID and terminates only a matching stale Claude Remote Control process before restoring the selected worker.

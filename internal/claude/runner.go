@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/creack/pty"
 )
 
 // Command describes one invocation of the unmodified Claude Code binary.
@@ -22,6 +26,7 @@ type Process interface {
 	PID() int
 	Ready() <-chan struct{}
 	ReadyError() error
+	RemoteURL() string
 	Signal(os.Signal) error
 	Kill() error
 	Wait() error
@@ -64,19 +69,23 @@ func (r *execRunner) Start(command Command) (Process, error) {
 	cmd.Env = command.Env
 	process := &execProcess{cmd: cmd, ready: make(chan struct{}), done: make(chan struct{})}
 	observer := &readinessWriter{process: process}
-	// Inspect output only for a successful Remote Control URL, then discard it.
-	// The URL itself is never persisted or logged.
-	cmd.Stdout = observer
-	cmd.Stderr = observer
-	if err := cmd.Start(); err != nil {
+	// Inspect output for the short-lived Remote Control URL. It is kept only in
+	// process memory so the tailnet dashboard can open the registered session.
+	terminal, err := pty.Start(cmd)
+	if err != nil {
 		return nil, err
 	}
+	process.terminal = terminal
+	go func() {
+		_, _ = io.Copy(observer, terminal)
+	}()
 	go process.reap()
 	return process, nil
 }
 
 type execProcess struct {
 	cmd        *exec.Cmd
+	terminal   *os.File
 	ready      chan struct{}
 	done       chan struct{}
 	readyOnce  sync.Once
@@ -84,6 +93,7 @@ type execProcess struct {
 	readyErr   error
 	waitErr    error
 	diagnostic string
+	remoteURL  string
 }
 
 func (p *execProcess) PID() int {
@@ -99,6 +109,12 @@ func (p *execProcess) ReadyError() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.readyErr
+}
+
+func (p *execProcess) RemoteURL() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.remoteURL
 }
 
 func (p *execProcess) Signal(signal os.Signal) error {
@@ -127,6 +143,9 @@ func (p *execProcess) markReady(err error) {
 
 func (p *execProcess) reap() {
 	err := p.cmd.Wait()
+	if p.terminal != nil {
+		_ = p.terminal.Close()
+	}
 	p.mu.Lock()
 	if p.diagnostic != "" {
 		err = errors.New(p.diagnostic)
@@ -147,10 +166,44 @@ func (p *execProcess) setDiagnostic(message string) {
 	p.markReady(errors.New(message))
 }
 
+func (p *execProcess) setRemoteURL(remoteURL string) {
+	p.mu.Lock()
+	p.remoteURL = remoteURL
+	p.mu.Unlock()
+	p.markReady(nil)
+}
+
 type readinessWriter struct {
 	mu      sync.Mutex
 	process *execProcess
 	buffer  string
+}
+
+var remoteControlURLPattern = regexp.MustCompile(`https://claude(?:\.ai|\.com)/code/[^\s\x1b]+`)
+
+func extractRemoteControlURL(output string) string {
+	for _, match := range remoteControlURLPattern.FindAllString(output, -1) {
+		candidate := strings.TrimRight(match, `.,;:)]}>"'`)
+		parsed, err := url.Parse(candidate)
+		if err != nil || parsed.Scheme != "https" {
+			continue
+		}
+		if parsed.Hostname() != "claude.ai" && parsed.Hostname() != "claude.com" {
+			continue
+		}
+		if parsed.Path == "/code/" || !strings.HasPrefix(parsed.Path, "/code/") {
+			continue
+		}
+		return parsed.String()
+	}
+	plain := strings.ToLower(output)
+	registered := strings.Contains(plain, "take this session with you") &&
+		strings.Contains(plain, "claude.ai/code") &&
+		strings.Contains(plain, "press ctrl+c to stop")
+	if registered {
+		return "https://claude.ai/code"
+	}
+	return ""
 }
 
 func (w *readinessWriter) Write(data []byte) (int, error) {
@@ -176,10 +229,8 @@ func (w *readinessWriter) Write(data []byte) (int, error) {
 			return len(data), nil
 		}
 	}
-	registeredWithoutURL := strings.Contains(plain, "take this session with you") &&
-		strings.Contains(plain, "press ctrl+c to stop")
-	if registeredWithoutURL || strings.Contains(plain, "https://claude.ai/code/") || strings.Contains(plain, "https://claude.com/code/") {
-		w.process.markReady(nil)
+	if remoteURL := extractRemoteControlURL(w.buffer); remoteURL != "" {
+		w.process.setRemoteURL(remoteURL)
 	}
 	return len(data), nil
 }
