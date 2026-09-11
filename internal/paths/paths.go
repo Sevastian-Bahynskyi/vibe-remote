@@ -23,6 +23,7 @@ type Layout struct {
 	CodexConfig       string
 	InstallRecord     string
 	CodexHookVerified string
+	BatteryHistory    string
 }
 
 func Resolve() (Layout, error) {
@@ -42,6 +43,7 @@ func Resolve() (Layout, error) {
 		CodexConfig:       filepath.Join(home, ".codex", "config.toml"),
 		InstallRecord:     filepath.Join(root, "install-record.json"),
 		CodexHookVerified: filepath.Join(root, "codex-hook-verified"),
+		BatteryHistory:    filepath.Join(root, "battery-history.jsonl"),
 	}, nil
 }
 

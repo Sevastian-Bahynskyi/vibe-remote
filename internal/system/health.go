@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 )
 
 type Health struct {
@@ -65,11 +64,6 @@ func codexHooksInstalled(path, binary string) bool {
 	return err == nil && strings.Contains(string(data), binary+"' hook codex")
 }
 
-func HoldAwake(ctx context.Context) error {
-	command := exec.CommandContext(ctx, "/usr/bin/caffeinate", "-s", "-w", fmt.Sprintf("%d", os.Getpid()))
-	return command.Run()
-}
-
 func tailscaleState(ctx context.Context) (bool, string) {
 	output, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
 	if err != nil {
@@ -117,27 +111,4 @@ func onACPower(ctx context.Context) bool {
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
-}
-
-type AwakeManager struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	once   sync.Once
-}
-
-func StartAwakeManager(parent context.Context) *AwakeManager {
-	ctx, cancel := context.WithCancel(parent)
-	manager := &AwakeManager{cancel: cancel, done: make(chan struct{})}
-	go func() {
-		defer close(manager.done)
-		_ = HoldAwake(ctx)
-	}()
-	return manager
-}
-
-func (manager *AwakeManager) Close() {
-	manager.once.Do(func() {
-		manager.cancel()
-		<-manager.done
-	})
 }

@@ -10,7 +10,7 @@ Vibe Remote is a small macOS service for choosing which Claude subscription is a
 - Captures provider-neutral session checkpoints from official Claude and Codex hooks without an LLM call.
 - Creates destination-scoped, 48-hour, one-use handoffs. Type exactly `continue` in the selected destination to inject the latest eight captured turns plus live Git state.
 - Keeps closed checkpoints for 30 days. Pinned checkpoints are retained until unpinned.
-- Keeps the Mac awake while it is on AC power. Closing the lid can still make it unavailable, by design.
+- Blocks idle sleep on AC power only while slots are actually serving Remote Control, and tracks the battery cost of doing so. Closing the lid can still make it unavailable, by design.
 
 ## Account isolation and credentials
 
@@ -86,11 +86,38 @@ Remote Control keeps the full local Claude environment, including local MCP serv
 - Paths are validated before profile removal or workspace execution.
 - Existing Tailscale Serve routes are preserved; Vibe Remote owns only `/vibe-remote/`.
 
+## Keeping the Mac awake
+
+Remote Control reaches a slot only while that slot's process holds its connection open, and a sleeping Mac drops those connections. Availability therefore costs wakefulness. Vibe Remote takes an IOKit `NetworkClientActive` power assertion — narrower than `caffeinate -s`, so a deliberate sleep or a closed lid still works — and holds it only when it must:
+
+| `VIBE_REMOTE_AWAKE` | Behavior |
+| --- | --- |
+| `auto` (default) | Hold only while at least one slot is serving. Reachability is unchanged: with no slots running there is nothing to reach. |
+| `always` | Hold for the daemon's whole lifetime. |
+| `off` | Never hold. Slots drop off Remote Control whenever the Mac sleeps. |
+
+No policy holds the assertion on battery power; on battery, sleeping is what protects the charge.
+
+## Battery tracking
+
+`vibe-remote battery` prints the gauge and the trend across recorded samples, then records one itself. The daemon writes on start, on stop, whenever it takes or drops the assertion, and once a day — the daily sample exists because under `auto` a busy Mac never changes keep-awake state, so event-driven rows alone would leave a month of uptime holding a single sample. History is a JSONL file at `~/Library/Application Support/Vibe Remote/battery-history.jsonl`.
+
+Two separate lines report wakefulness, and the distinction matters:
+
+- `Keep-awake (ours)` / `Keep-awake duty` — whether *this daemon* is holding the Mac awake.
+- `Sleep blocked` — whether *anything* is, and what. Claude Code takes its own `caffeinate -i` whenever a session is working, and Electron apps hold `NoIdleSleepAssertion`, so the Mac can be pinned awake with this project's assertion released. Reading only our own assertion would have flattered the policy and misreported an idle Mac.
+
+Note that macOS smooths the health percentage it displays: it matched no raw IOKit ratio on the machine this was built against (93.9% nominal-to-design read as 96%), so `Gauge capacity` in mAh is the honest trend signal and the percentage will sit still for weeks and then step.
+
 ## Operations
 
 ```sh
 # Service and account/checkpoint status
 "$HOME/Library/Application Support/Vibe Remote/bin/vibe-remote" status
+
+# Battery wear and keep-awake duty cycle
+"$HOME/Library/Application Support/Vibe Remote/bin/vibe-remote" battery
+"$HOME/Library/Application Support/Vibe Remote/bin/vibe-remote" battery -json
 
 # Reinstall/repair hooks
 "$HOME/Library/Application Support/Vibe Remote/bin/vibe-remote" hooks-install

@@ -35,7 +35,7 @@ func main() {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("expected command: serve, install, account-add, account-login, hook, notify, hooks-install, or status")
+		return errors.New("expected command: serve, install, account-add, account-login, hook, notify, hooks-install, battery, or status")
 	}
 	layout, err := paths.Resolve()
 	if err != nil {
@@ -60,6 +60,8 @@ func run(arguments []string) error {
 		return runNotify(layout, arguments[1:])
 	case "hooks-install":
 		return install.InstallHooks(layout)
+	case "battery":
+		return battery(layout, arguments[1:])
 	case "status":
 		return status(layout)
 	case "version", "--version", "-v":
@@ -90,7 +92,14 @@ func serve(layout paths.Layout) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	awake := systemstate.StartAwakeManager(ctx)
+	recordBattery(layout, "serve-start")
+	defer recordBattery(layout, "serve-stop")
+	go sampleBatteryDaily(ctx, layout)
+	awake := systemstate.StartAwakeManager(ctx, systemstate.AwakeOptions{
+		Policy:   systemstate.ParseAwakePolicy(os.Getenv("VIBE_REMOTE_AWAKE")),
+		Demand:   func() bool { return manager.RunningCount() > 0 },
+		OnChange: func(held bool) { recordBattery(layout, awakeLabel(held)) },
+	})
 	defer awake.Close()
 	// Restoring slots waits on Claude Remote Control registration, which is
 	// slow for a cold profile and serialized across slots, so it runs behind
@@ -243,6 +252,146 @@ func forwardNotification(encoded, payload string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run()
+}
+
+func awakeLabel(held bool) string {
+	if held {
+		return "keep-awake-hold"
+	}
+	return "keep-awake-release"
+}
+
+// sampleBatteryDaily keeps the wear history dense enough to show a trend. Under
+// the auto policy a busy Mac never changes keep-awake state, so event-driven
+// samples alone would leave a month of uptime holding a single row.
+func sampleBatteryDaily(ctx context.Context, layout paths.Layout) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			recordBattery(layout, "daily")
+		}
+	}
+}
+
+// recordBattery appends one gauge reading to the history. Failures are ignored:
+// wear tracking must never take the daemon down.
+func recordBattery(layout paths.Layout, label string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = systemstate.RecordBattery(ctx, layout.BatteryHistory, label)
+}
+
+func battery(layout paths.Layout, arguments []string) error {
+	flags := flag.NewFlagSet("battery", flag.ContinueOnError)
+	asJSON := flags.Bool("json", false, "print every recorded sample as JSON")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if err := paths.Ensure(layout); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	current, err := systemstate.RecordBattery(ctx, layout.BatteryHistory, "cli")
+	if err != nil {
+		return err
+	}
+	history, err := systemstate.LoadBatteryHistory(layout.BatteryHistory)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(history)
+	}
+	printBattery(current, history)
+	return nil
+}
+
+func printBattery(current systemstate.BatterySnapshot, history []systemstate.BatterySnapshot) {
+	fmt.Println("Battery")
+	fmt.Printf("  Health (macOS)     %d%%\n", current.HealthPercent)
+	fmt.Printf("  Gauge capacity     %d of %d mAh design (%s raw)\n",
+		current.NominalCapacityMah, current.DesignCapacityMah,
+		percent(current.NominalCapacityMah, current.DesignCapacityMah))
+	fmt.Printf("  Cycles             %d\n", current.CycleCount)
+	fmt.Printf("  Charge             %d%% (%s)\n", current.ChargePercent, chargeState(current))
+	fmt.Printf("  Temperature        %.1f °C\n", current.TemperatureCelsius)
+	fmt.Printf("  System draw        %.1f W\n", float64(current.SystemPowerMilliwatts)/1000)
+	fmt.Printf("  Keep-awake (ours)  %s\n", awakeState(current.KeepAwakeHeld))
+	fmt.Printf("  Sleep blocked      %s\n", blockedState(current))
+
+	report, ok := systemstate.SummarizeBattery(history)
+	if !ok || report.Samples < 2 {
+		fmt.Println("\nTrend")
+		fmt.Println("  Not enough samples yet. Run this again after a few days.")
+		return
+	}
+	fmt.Printf("\nTrend (%d samples over %s)\n", report.Samples, duration(report.Span))
+	fmt.Printf("  Health             %d%% → %d%% (%+d)\n",
+		report.HealthFirst, report.HealthLast, report.HealthPercentDelta)
+	fmt.Printf("  Gauge capacity     %d → %d mAh (%+d)\n",
+		report.NominalFirst, report.NominalLast, report.NominalMahDelta)
+	fmt.Printf("  Cycles added       %+d\n", report.CyclesAdded)
+	fmt.Printf("  Avg temperature    %.1f °C\n", report.AverageTemperature)
+	fmt.Printf("  Avg system draw    %.1f W\n", report.AveragePowerWatts)
+	fmt.Printf("  Keep-awake duty    %.0f%% of samples (this daemon)\n", report.KeepAwakeDutyCycle*100)
+	fmt.Printf("  Sleep blocked      %.0f%% of samples (anything)\n", report.SleepBlockedCycle*100)
+	if len(report.SleepBlockers) > 0 {
+		fmt.Printf("  Blocked by         %s\n", strings.Join(report.SleepBlockers, ", "))
+	}
+}
+
+func blockedState(snapshot systemstate.BatterySnapshot) string {
+	if !snapshot.SleepBlocked {
+		return "no — the Mac can idle-sleep"
+	}
+	if len(snapshot.SleepBlockers) == 0 {
+		return "yes"
+	}
+	return "yes — " + strings.Join(snapshot.SleepBlockers, ", ")
+}
+
+func percent(value, total int64) string {
+	if total == 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f%%", float64(value)/float64(total)*100)
+}
+
+func chargeState(snapshot systemstate.BatterySnapshot) string {
+	switch {
+	case snapshot.Charging:
+		return "charging"
+	case snapshot.OnACPower:
+		return "on AC, holding"
+	default:
+		return "on battery"
+	}
+}
+
+func awakeState(held bool) string {
+	if held {
+		return "held — idle sleep is blocked right now"
+	}
+	return "released — the Mac may sleep"
+}
+
+func duration(span time.Duration) string {
+	days := int(span.Hours()) / 24
+	hours := int(span.Hours()) % 24
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, int(span.Minutes())%60)
+	}
+	return fmt.Sprintf("%dm", int(span.Minutes()))
 }
 
 func status(layout paths.Layout) error {
