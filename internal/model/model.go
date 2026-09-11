@@ -130,3 +130,22 @@ const (
 	DesiredRunning = "running"
 	DesiredStopped = "stopped"
 )
+
+// ValidResumeSessionID reports whether a Claude conversation identifier is safe
+// to store as a slot's current conversation and to hand to `claude --resume`.
+// The rule lives here because two packages enforce it from opposite ends: the
+// checkpoint hook validates before writing the link, and the worker validates
+// again before the value reaches a command line.
+func ValidResumeSessionID(value string) bool {
+	if value == "" || len(value) > 128 || value[0] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}

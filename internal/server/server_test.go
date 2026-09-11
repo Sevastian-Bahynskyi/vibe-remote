@@ -154,18 +154,38 @@ func TestResolveResumeRejectsForeignConversations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resume, err := service.resolveResume(ctx, session.ID, "account-a", "/Users/me/admin")
+	resume, err := service.resolveResume(ctx, &session.ID, "", "account-a", "/Users/me/admin")
 	if err != nil || resume != "native-1" {
 		t.Fatalf("resolveResume() = %q, %v", resume, err)
 	}
-	if _, err := service.resolveResume(ctx, session.ID, "account-b", "/Users/me/admin"); err == nil {
+	if _, err := service.resolveResume(ctx, &session.ID, "", "account-b", "/Users/me/admin"); err == nil {
 		t.Fatal("a conversation from another account was accepted")
 	}
-	if _, err := service.resolveResume(ctx, session.ID, "account-a", "/Users/me/other"); err == nil {
+	if _, err := service.resolveResume(ctx, &session.ID, "", "account-a", "/Users/me/other"); err == nil {
 		t.Fatal("a conversation from another workspace was accepted")
 	}
-	if resume, err := service.resolveResume(ctx, "", "account-a", "/Users/me/admin"); err != nil || resume != "" {
-		t.Fatalf("an empty request must start a new conversation: %q, %v", resume, err)
+	empty := ""
+	if resume, err := service.resolveResume(ctx, &empty, "native-1", "account-a", "/Users/me/admin"); err != nil || resume != "" {
+		t.Fatalf("an explicit empty request must start a new conversation: %q, %v", resume, err)
+	}
+}
+
+// An omitted conversation keeps the link the checkpoint hook made, so editing a
+// slot's name never detaches the conversation it is talking in.
+func TestResolveResumeKeepsTheLinkedConversationWhenNoneIsRequested(t *testing.T) {
+	t.Parallel()
+	service := newTestServer(t)
+	ctx := context.Background()
+
+	resume, err := service.resolveResume(ctx, nil, "native-1", "account-a", "/Users/me/admin")
+	if err != nil || resume != "native-1" {
+		t.Fatalf("resolveResume() = %q, %v", resume, err)
+	}
+	if resume, err := service.resolveResume(ctx, nil, "", "account-a", "/Users/me/admin"); err != nil || resume != "" {
+		t.Fatalf("an unlinked slot must stay unlinked: %q, %v", resume, err)
+	}
+	if _, err := service.resolveResume(ctx, nil, "--dangerously-skip-permissions", "account-a", "/Users/me/admin"); err == nil {
+		t.Fatal("an unsafe stored conversation was accepted")
 	}
 }
 
@@ -275,3 +295,87 @@ func (*blockingProcess) Signal(os.Signal) error   { return nil }
 func (p *blockingProcess) Kill() error            { p.stop(); return nil }
 func (p *blockingProcess) Wait() error            { <-p.done; return nil }
 func (p *blockingProcess) stop()                  { p.once.Do(func() { close(p.done) }) }
+
+// Tailscale Serve proxies to the same loopback listener the Mac's own browser
+// uses, so the peer address alone cannot tell the phone from this Mac.
+func TestLocalRequestIgnoresProxiedLoopback(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		address string
+		headers map[string]string
+		want    bool
+	}{
+		{name: "this Mac", address: "127.0.0.1:53124", want: true},
+		{name: "phone through Serve", address: "127.0.0.1:53125", headers: map[string]string{"X-Forwarded-For": "100.64.0.7"}, want: false},
+		{name: "identified tailnet user", address: "127.0.0.1:53126", headers: map[string]string{"Tailscale-User-Login": "someone@example.com"}, want: false},
+		{name: "another host", address: "100.64.0.7:53127", want: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+			request.RemoteAddr = testCase.address
+			for name, value := range testCase.headers {
+				request.Header.Set(name, value)
+			}
+			if got := isLocalRequest(request); got != testCase.want {
+				t.Fatalf("isLocalRequest() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+// Only a link Claude itself printed may be handed to `open`.
+func TestClaudeRemoteURLRejectsForeignLinks(t *testing.T) {
+	t.Parallel()
+	valid := []string{"https://claude.ai/code", "https://claude.ai/code/cse_test", "https://claude.com/code/cse_test"}
+	for _, candidate := range valid {
+		if !isClaudeRemoteURL(candidate) {
+			t.Fatalf("isClaudeRemoteURL(%q) = false, want true", candidate)
+		}
+	}
+	invalid := []string{"", "http://claude.ai/code", "https://claude.ai.evil.test/code", "https://claude.ai/settings", "file:///Applications", "https://claude.ai/codex"}
+	for _, candidate := range invalid {
+		if isClaudeRemoteURL(candidate) {
+			t.Fatalf("isClaudeRemoteURL(%q) = true, want false", candidate)
+		}
+	}
+}
+
+func TestClaudeDesktopDeepLink(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		remote string
+		want   string
+	}{
+		{remote: "https://claude.ai/code/cse_01AC1WzhhYzERyni8guwwcSD", want: "claude://claude.ai/code/cse_01AC1WzhhYzERyni8guwwcSD"},
+		{remote: "https://claude.com/code/session_test-1", want: "claude://claude.ai/code/session_test-1"},
+		{remote: "https://claude.ai/code"},
+		{remote: "https://claude.ai/code/not-a-session"},
+		{remote: "https://claude.ai/code/cse_test/extra"},
+		{remote: "https://example.com/code/cse_test"},
+	}
+	for _, testCase := range cases {
+		got, ok := claudeDesktopDeepLink(testCase.remote)
+		if got != testCase.want || ok != (testCase.want != "") {
+			t.Fatalf("claudeDesktopDeepLink(%q) = %q, %v, want %q, %v", testCase.remote, got, ok, testCase.want, testCase.want != "")
+		}
+	}
+}
+
+// Opening the app happens on the Mac, so a phone asking for it would launch a
+// window nobody is looking at.
+func TestOpenDesktopRefusedFromTailnet(t *testing.T) {
+	t.Parallel()
+	service, database := newTestServerWithStore(t, inertRunner{})
+	seedRunnableSlot(t, service, database, "rs_desktop", "11111111-2222-3333-4444-555555555555")
+	request := httptest.NewRequest(http.MethodPost, "/api/remote-sessions/rs_desktop/open-desktop", nil)
+	request.RemoteAddr = "127.0.0.1:53200"
+	request.Header.Set("X-Forwarded-For", "100.64.0.7")
+	request.Header.Set("X-Vibe-Remote", "1")
+	response := httptest.NewRecorder()
+	service.http.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("POST open-desktop from the tailnet = %d, want 403", response.Code)
+	}
+}

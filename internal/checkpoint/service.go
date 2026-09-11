@@ -24,6 +24,7 @@ const (
 
 type Repository interface {
 	RecordHookEvent(context.Context, store.HookEvent) (model.Session, model.Turn, error)
+	LinkRemoteSessionConversation(context.Context, string, string) error
 	FindHandoff(context.Context, model.Provider, string, string) (model.Handoff, error)
 	ClaimHandoffByID(context.Context, string) (store.HandoffClaim, error)
 	CompleteHandoffClaim(context.Context, string, string) (model.Handoff, error)
@@ -86,10 +87,18 @@ func NewService(repository Repository, git GitCapturer) *Service {
 	return &Service{repository: repository, git: git, now: time.Now}
 }
 
+// HookOrigin identifies the agent process whose hook is reporting. The account
+// attributes the checkpoint; the slot, present only for a worker this service
+// started, says which Remote Control session the conversation belongs to.
+type HookOrigin struct {
+	AccountID string
+	SlotID    string
+}
+
 func (s *Service) HandleStdin(
 	ctx context.Context,
 	provider model.Provider,
-	accountID string,
+	origin HookOrigin,
 	reader io.Reader,
 ) (HookResponse, error) {
 	payload, err := io.ReadAll(io.LimitReader(reader, 4*1024*1024))
@@ -103,7 +112,15 @@ func (s *Service) HandleStdin(
 		}
 		return HookResponse{}, err
 	}
-	event.AccountID = accountID
+	event.AccountID = origin.AccountID
+	// Link before recording: the conversation is the slot's regardless of
+	// whether this particular checkpoint lands, and linking first keeps a
+	// handoff claim from being stranded by a later failure.
+	if origin.SlotID != "" {
+		if err := s.repository.LinkRemoteSessionConversation(ctx, origin.SlotID, event.NativeSessionID); err != nil {
+			return HookResponse{}, err
+		}
+	}
 	return s.recordAndMaybeContinue(ctx, event)
 }
 

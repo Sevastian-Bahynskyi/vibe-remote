@@ -1,0 +1,20 @@
+{{/*
+  The notice is swapped out-of-band by every action response. Because the whole
+  element is replaced each time, the fade animation restarts on its own with no
+  JavaScript. Errors carry data-sticky and are not faded: they stay until the
+  next action displaces them.
+*/}}
+{{define "notice-oob"}}<div id="notice" class="notice-host" role="status" aria-live="polite" hx-swap-oob="true">{{if .Message}}{{template "notice-body" .}}{{end}}</div>{{end}}
+
+{{define "notice-body"}}<p class="notice" data-tone="{{.Tone}}"{{if eq .Tone "bad"}} data-sticky="true"{{end}}>{{.Message}}</p>{{end}}
+
+{{define "alerts"}}
+<section id="alerts" class="alerts" data-refresh="ui/fragments/alerts" data-refresh-every="60000">
+  {{range .}}
+    <a class="alert" data-tone="{{.Tone}}" href="{{.Href}}" hx-get="{{.Href}}" hx-target="#app" hx-push-url="true">
+      <span>{{.Message}}</span>
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  {{end}}
+</section>
+{{end}}

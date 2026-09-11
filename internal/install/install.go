@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/paths"
+	systemstate "github.com/Sevastian-Bahynskyi/vibe-remote/internal/system"
 )
 
 type Record struct {
@@ -31,10 +32,7 @@ func Install(layout paths.Layout, executable string) error {
 	if err := paths.Ensure(layout); err != nil {
 		return err
 	}
-	if err := copyExecutable(executable, layout.Binary); err != nil {
-		return err
-	}
-	if err := InstallHooks(layout); err != nil {
+	if err := installManagedFiles(layout, executable); err != nil {
 		return err
 	}
 	if err := writeLaunchAgent(layout); err != nil {
@@ -52,6 +50,24 @@ func Install(layout paths.Layout, executable string) error {
 		return fmt.Errorf("configure Tailscale Serve: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func installManagedFiles(layout paths.Layout, executable string) error {
+	preserveVerification := systemstate.CodexHooksVerified(layout.CodexHooks, layout.CodexHookVerified, layout.Binary)
+	if err := copyExecutable(executable, layout.Binary); err != nil {
+		return err
+	}
+	if err := InstallHooks(layout); err != nil {
+		return err
+	}
+	if !preserveVerification {
+		return nil
+	}
+	fingerprint, err := systemstate.HookFingerprint(layout.CodexHooks, layout.Binary)
+	if err != nil {
+		return fmt.Errorf("refresh Codex hook verification: %w", err)
+	}
+	return writeFileAtomic(layout.CodexHookVerified, []byte(fingerprint+"\n"), 0o600)
 }
 
 func ensureFunnelDisabled() error {

@@ -1,0 +1,144 @@
+{{define "account-list"}}
+<section id="account-list" class="cards">
+  {{range .}}
+  <article class="row" id="account-{{.ID}}">
+    <div class="row-main">
+      <span class="dot" data-tone="{{.Tone}}" aria-hidden="true"></span>
+      <div class="row-text">
+        <span class="row-name">{{.Email}}</span>
+        <span class="row-meta">{{.Status}}{{if .SessionCount}} · {{plural .SessionCount "session"}}{{end}}</span>
+      </div>
+    </div>
+    {{if .LastError}}<p class="row-error">{{.LastError}}</p>{{end}}
+    <div class="row-actions">
+      <form hx-post="ui/accounts/{{.ID}}/refresh" hx-target="#account-list" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <button class="btn" type="submit">Check sign-in<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+      </form>
+      <details class="danger-zone">
+        <summary class="btn btn-danger-quiet">Remove</summary>
+        <form class="danger-form" hx-post="ui/accounts/{{.ID}}/delete" hx-target="#account-list" hx-swap="outerHTML" hx-disabled-elt="find button">
+          <label class="check">
+            <input type="checkbox" name="deleteConversations" value="1">
+            <span>Also delete its saved conversations</span>
+          </label>
+          <button class="btn btn-danger" type="submit">Remove {{.Email}}</button>
+        </form>
+      </details>
+    </div>
+  </article>
+  {{end}}
+  {{if not .}}<p class="empty">No accounts yet.</p>{{end}}
+</section>
+{{end}}
+
+{{define "workspace-list"}}
+<section id="workspace-list" class="cards">
+  {{range .}}
+  <article class="row" id="workspace-{{.ID}}">
+    <div class="row-main">
+      <div class="row-text">
+        <span class="row-name">{{.Label}}</span>
+        <span class="row-meta mono">{{.Path}}</span>
+      </div>
+    </div>
+    <div class="row-actions">
+      <details class="danger-zone">
+        <summary class="btn btn-danger-quiet">Remove</summary>
+        <form class="danger-form" hx-post="ui/workspaces/{{.ID}}/delete" hx-target="#workspace-list" hx-swap="outerHTML" hx-disabled-elt="find button">
+          <p class="confirm-message">Your files are not touched.{{if .SessionCount}} {{plural .SessionCount "session"}} still point here.{{end}}</p>
+          <button class="btn btn-danger" type="submit">Remove {{.Label}}</button>
+        </form>
+      </details>
+    </div>
+  </article>
+  {{end}}
+  {{if not .}}<p class="empty">No workspaces yet.</p>{{end}}
+</section>
+{{end}}
+
+{{define "conversation-list"}}
+<section id="conversation-list" class="cards">
+  {{range .}}
+  <a class="row row-link" href="{{screen "conversation" .ID}}" hx-get="{{screen "conversation" .ID}}" hx-target="#app" hx-push-url="true">
+    <div class="row-text">
+      <span class="row-name">{{if .Pinned}}<span class="pin" aria-label="Pinned">★</span> {{end}}{{.Title}}</span>
+      <span class="row-meta">{{.Provider}} · {{.State}}{{if .Ago}} · {{.Ago}}{{end}}</span>
+    </div>
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  {{end}}
+  {{if not .}}<p class="empty">No conversations captured yet.</p>{{end}}
+</section>
+{{end}}
+
+{{define "conversation-detail"}}
+<section id="conversation-detail" class="detail">
+  {{with .Conversation}}
+  <h2>{{.Title}}</h2>
+  <dl class="facts">
+    <div><dt>Agent</dt><dd>{{.Provider}}</dd></div>
+    <div><dt>State</dt><dd data-tone="{{.Tone}}">{{.State}}</dd></div>
+    <div><dt>Folder</dt><dd class="mono">{{.WorkspacePath}}</dd></div>
+    {{if .Branch}}<div><dt>Branch</dt><dd class="mono">{{.Branch}}</dd></div>{{end}}
+    {{if .Ago}}<div><dt>Updated</dt><dd>{{.Ago}}</dd></div>{{end}}
+  </dl>
+  {{if .SharedWorktree}}<p class="warn-line">Other sessions are working in these files.</p>{{end}}
+
+  <form class="inline-edit" hx-post="ui/conversations/{{.ID}}" hx-target="#conversation-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <label class="field-label" for="conversation-title-{{.ID}}">Name</label>
+    <div class="field-row">
+      <input id="conversation-title-{{.ID}}" name="title" type="text" value="{{.Title}}" autocomplete="off">
+      <button class="btn" type="submit">Rename</button>
+    </div>
+  </form>
+
+  <div class="detail-actions">
+    <form hx-post="ui/conversations/{{.ID}}" hx-target="#conversation-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <input type="hidden" name="pinned" value="{{if .Pinned}}0{{else}}1{{end}}">
+      <button class="btn btn-wide" type="submit">{{if .Pinned}}Stop keeping this{{else}}Keep this permanently{{end}}</button>
+    </form>
+    {{if .ResumeCommand}}
+      <button class="btn btn-wide" type="button" data-copy="{{.ResumeCommand}}">Copy resume command</button>
+    {{end}}
+  </div>
+  {{end}}
+
+  <h3 class="section-title">Continue this conversation somewhere else</h3>
+  <div class="detail-actions">
+    {{$id := .Conversation.ID}}
+    {{range .Destinations}}
+      <form hx-post="ui/handoffs" hx-target="#conversation-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="sourceSessionId" value="{{$id}}">
+        <input type="hidden" name="destinationProvider" value="{{.Provider}}">
+        <input type="hidden" name="destinationAccountId" value="{{.AccountID}}">
+        <button class="btn btn-wide" type="submit">Hand off to {{.Label}}<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+      </form>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{define "system-panel"}}
+<section id="system-panel" class="detail">
+  <dl class="facts">
+    {{range .Items}}
+    <div><dt>{{.Label}}</dt><dd data-tone="{{.Tone}}">{{.Detail}}</dd></div>
+    {{end}}
+    {{if .StartedAgo}}<div><dt>Running since</dt><dd>{{.StartedAgo}}</dd></div>{{end}}
+  </dl>
+  {{if .TailscaleURL}}<p class="mono url-line">{{.TailscaleURL}}</p>{{end}}
+  <div class="detail-actions">
+    <form hx-post="ui/install-hooks" hx-target="#system-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <button class="btn btn-wide" type="submit">Reinstall checkpoint hooks<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+    </form>
+  </div>
+  <div class="field">
+    <label class="field-label" for="theme-select">Appearance</label>
+    <select id="theme-select" data-theme-select>
+      <option value="system">Match the system</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  </div>
+</section>
+{{end}}

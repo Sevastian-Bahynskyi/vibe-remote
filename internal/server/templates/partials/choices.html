@@ -1,0 +1,71 @@
+{{/*
+  Radio lists rather than <select>: on a phone every option is visible and
+  choosing one is a single tap on a full-width target, instead of opening a
+  picker and scrolling it.
+*/}}
+
+{{define "choice"}}
+<label class="choice{{if .Disabled}} choice-disabled{{end}}">
+  <input type="radio" name="{{.Name}}" value="{{.Value}}"{{if .Selected}} checked{{end}}{{if .Disabled}} disabled{{end}}>
+  <span class="choice-text">
+    <span class="choice-label">{{.Label}}</span>
+    {{if .Detail}}<span class="choice-detail">{{.Detail}}</span>{{end}}
+  </span>
+</label>
+{{end}}
+
+{{define "conversation-choices"}}
+<fieldset id="conversation-choices" class="field">
+  <legend>Conversation</legend>
+  <div class="choices">
+    {{range .}}{{template "choice" .}}{{end}}
+  </div>
+</fieldset>
+{{end}}
+
+{{define "session-form"}}
+<form class="form" id="session-form"
+      hx-post="{{.Action}}" hx-target="#app" hx-swap="innerHTML"
+      hx-disabled-elt="find button[type=submit]">
+  {{if .SessionID}}<input type="hidden" name="sessionId" value="{{.SessionID}}">{{end}}
+
+  {{if .Blocker}}
+    <p class="blocker">{{.Blocker}}</p>
+  {{end}}
+
+  {{/* Account and workspace drive which conversations can be resumed, so a
+       change to either reloads that list from the server. The change event
+       bubbles from the radios to the fieldset, which is why the trigger sits
+       here and not on each input. */}}
+  <fieldset class="field"
+            hx-get="ui/fragments/conversation-options" hx-trigger="change"
+            hx-target="#conversation-choices" hx-swap="outerHTML" hx-include="closest form">
+    <legend>Claude account</legend>
+    <div class="choices">
+      {{range .Accounts}}{{template "choice" .}}{{end}}
+      {{if not .Accounts}}<p class="empty">No signed-in accounts.</p>{{end}}
+    </div>
+  </fieldset>
+
+  <fieldset class="field"
+            hx-get="ui/fragments/conversation-options" hx-trigger="change"
+            hx-target="#conversation-choices" hx-swap="outerHTML" hx-include="closest form">
+    <legend>Workspace</legend>
+    <div class="choices">
+      {{range .Workspaces}}{{template "choice" .}}{{end}}
+      {{if not .Workspaces}}<p class="empty">No workspaces.</p>{{end}}
+    </div>
+  </fieldset>
+
+  {{template "conversation-choices" .Conversations}}
+
+  <div class="field">
+    <label class="field-label" for="session-name">Name in the Claude app</label>
+    <input id="session-name" name="name" type="text" autocomplete="off" value="{{.Name}}" placeholder="Chosen automatically">
+  </div>
+
+  <button class="btn btn-primary btn-wide" type="submit"{{if not .CanSubmit}} disabled{{end}}>
+    {{.SubmitLabel}}<span class="spinner htmx-indicator" aria-hidden="true"></span>
+  </button>
+</form>
+{{end}}

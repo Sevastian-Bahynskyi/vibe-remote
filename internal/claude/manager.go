@@ -32,6 +32,7 @@ type Store interface {
 	GetAccount(context.Context, string) (model.Account, error)
 	ListAccounts(context.Context) ([]model.Account, error)
 	DeleteAccount(context.Context, string) error
+	GetRemoteSession(context.Context, string) (model.RemoteSession, error)
 }
 
 type Options struct {
@@ -335,8 +336,13 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 
 	m.mu.RLock()
 	current := m.workers[spec.ID]
+	// The conversation is deliberately not compared: the checkpoint hook links
+	// a live slot to whatever conversation it is talking in, so a running slot
+	// almost always holds a newer conversation than the one it launched with.
+	// Restarting on that drift would cut the very session it is tracking. A
+	// caller that means to change conversations stops the slot first.
 	unchanged := current != nil && current.account.ID == account.ID && current.workspace == workspace &&
-		current.name == name && current.resume == resume && current.state.Running
+		current.name == name && current.state.Running
 	m.mu.RUnlock()
 	if unchanged && !spec.Force {
 		return nil
@@ -518,20 +524,23 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) start(w *worker) (Process, error) {
+	resume := m.storedResume(w)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.workers[w.id] != w || w.ctx.Err() != nil {
 		return nil, context.Canceled
 	}
+	w.resume = resume
 	arguments := []string{"--dangerously-skip-permissions", "--chrome", "--verbose"}
-	if w.resume != "" {
-		arguments = append(arguments, "--resume", w.resume)
+	if resume != "" {
+		arguments = append(arguments, "--resume", resume)
 	}
 	arguments = append(arguments, "--remote-control", w.name)
 	process, err := m.runner.Start(Command{
 		Args: arguments,
 		Dir:  w.workspace,
-		Env:  m.profileEnv(w.account),
+		Env:  m.workerEnv(w),
 	})
 	if err != nil {
 		return nil, err
@@ -547,6 +556,28 @@ func (m *Manager) start(w *worker) (Process, error) {
 		PID: process.PID(), State: "connecting",
 	}
 	return process, nil
+}
+
+// storedResume reports the conversation this slot should open. The stored slot
+// row wins over the value the worker last launched with, because the checkpoint
+// hook keeps it current: a supervised restart after a crash then continues the
+// live conversation instead of silently opening an empty one.
+//
+// Anything unreadable or malformed falls back to the launch value rather than
+// failing the start, and a slot with no stored row (the manager can be driven
+// without one) keeps behaving exactly as its caller asked.
+func (m *Manager) storedResume(w *worker) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stored, err := m.store.GetRemoteSession(ctx, w.id)
+	if err != nil {
+		return w.resume
+	}
+	resume, err := safeResumeID(stored.ResumeSessionID)
+	if err != nil {
+		return w.resume
+	}
+	return resume
 }
 
 func (m *Manager) supervise(w *worker, process Process) {
@@ -705,6 +736,14 @@ func (m *Manager) profileEnv(account model.Account) []string {
 		"CLAUDE_CONFIG_DIR="+account.ProfileDir,
 		"VIBE_REMOTE_ACCOUNT_ID="+account.ID,
 	)
+}
+
+// workerEnv adds the slot identity to the profile environment. Hooks inherit it
+// from the Claude process, which is the only signal that distinguishes two slots
+// sharing one account and workspace: their conversations are otherwise
+// indistinguishable, and picking the most recent would attach the wrong one.
+func (m *Manager) workerEnv(w *worker) []string {
+	return append(m.profileEnv(w.account), "VIBE_REMOTE_SLOT_ID="+w.id)
 }
 
 func (m *Manager) recordAccountError(ctx context.Context, account model.Account, message string, cause error) (model.Account, error) {
@@ -918,7 +957,7 @@ func filteredEnvironment(input []string) []string {
 		"ANTHROPIC_API_KEY": {}, "ANTHROPIC_AUTH_TOKEN": {}, "ANTHROPIC_BASE_URL": {},
 		"CLAUDE_CODE_OAUTH_TOKEN": {}, "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": {}, "CLAUDE_CODE_OAUTH_SCOPES": {},
 		"CLAUDE_CODE_USE_BEDROCK": {}, "CLAUDE_CODE_USE_VERTEX": {}, "CLAUDE_CODE_USE_FOUNDRY": {},
-		"CLAUDE_CONFIG_DIR": {}, "VIBE_REMOTE_ACCOUNT_ID": {},
+		"CLAUDE_CONFIG_DIR": {}, "VIBE_REMOTE_ACCOUNT_ID": {}, "VIBE_REMOTE_SLOT_ID": {},
 	}
 	result := make([]string, 0, len(input))
 	for _, item := range input {
@@ -1009,14 +1048,7 @@ func safeResumeID(input string) (string, error) {
 	if resume == "" {
 		return "", nil
 	}
-	if len(resume) > 128 || strings.HasPrefix(resume, "-") {
-		return "", errors.New("invalid Claude session ID")
-	}
-	for _, character := range resume {
-		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || character == '-' || character == '_' {
-			continue
-		}
+	if !model.ValidResumeSessionID(resume) {
 		return "", errors.New("invalid Claude session ID")
 	}
 	return resume, nil

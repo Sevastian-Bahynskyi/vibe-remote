@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,26 +22,49 @@ type Health struct {
 	CodexHooksInstalled bool   `json:"codexHooksInstalled"`
 	ClaudeBinary        bool   `json:"claudeBinary"`
 	CodexBinary         bool   `json:"codexBinary"`
+	ClaudeDesktop       bool   `json:"claudeDesktop"`
 }
 
 func Inspect(ctx context.Context, codexHooksPath, codexHookVerified, binary string) Health {
 	installed := codexHooksInstalled(codexHooksPath, binary)
-	verified := false
-	if fingerprint, err := HookFingerprint(codexHooksPath, binary); err == nil {
-		marker, readErr := os.ReadFile(codexHookVerified)
-		verified = readErr == nil && strings.TrimSpace(string(marker)) == fingerprint
-	}
+	verified := CodexHooksVerified(codexHooksPath, codexHookVerified, binary)
 	health := Health{
 		OnACPower:           onACPower(ctx),
 		CodexHooks:          installed && verified,
 		CodexHooksInstalled: installed,
 		ClaudeBinary:        commandExists("claude"),
 		CodexBinary:         commandExists("codex"),
+		ClaudeDesktop:       ClaudeDesktopApp() != "",
 	}
 	health.TailscaleOnline, health.TailscaleURL = tailscaleState(ctx)
 	health.ServeReady, health.FunnelOff = tailscaleExposure(ctx)
 	health.TailnetOnly = health.TailscaleOnline && health.ServeReady && health.FunnelOff
 	return health
+}
+
+// ClaudeDesktopApp returns the installed Claude Desktop bundle path, or an
+// empty string when the app is absent. A Remote Control link can only be
+// handed to the app on this Mac when the bundle is present.
+func ClaudeDesktopApp() string {
+	candidates := []string{"/Applications/Claude.app"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "Applications", "Claude.app"))
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func CodexHooksVerified(hooksPath, markerPath, binary string) bool {
+	fingerprint, err := HookFingerprint(hooksPath, binary)
+	if err != nil {
+		return false
+	}
+	marker, err := os.ReadFile(markerPath)
+	return err == nil && strings.TrimSpace(string(marker)) == fingerprint
 }
 
 func HookFingerprint(hooksPath, binary string) (string, error) {

@@ -398,6 +398,102 @@ func TestActivateResumesTheRequestedConversation(t *testing.T) {
 	}
 }
 
+// The hook needs to know which slot it belongs to, because two slots can share
+// one account profile and workspace.
+func TestWorkerEnvironmentCarriesTheSlotIdentity(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{newFakeProcess(101, true, true)},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+
+	if err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project",
+	}); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	environment := runner.startAt(t, 0).Env
+	assertEnv(t, environment, "VIBE_REMOTE_SLOT_ID", "slot-a")
+	assertEnv(t, environment, "VIBE_REMOTE_ACCOUNT_ID", account.ID)
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The stored slot is authoritative: once the hook links a conversation, a
+// supervised restart must continue it rather than open an empty one.
+func TestRestartResumesTheConversationTheSlotAdopted(t *testing.T) {
+	store := newFakeStore()
+	first := newFakeProcess(101, true, true)
+	second := newFakeProcess(202, true, true)
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{first, second},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+
+	// The slot starts with no conversation, exactly as "New conversation" does.
+	if err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(runner.startAt(t, 0).Args, " "); strings.Contains(got, "--resume") {
+		t.Fatalf("a fresh slot resumed something: %q", got)
+	}
+
+	store.linkConversation("slot-a", "conversation-1")
+	first.exit(errors.New("boom"))
+	waitUntil(t, time.Second, func() bool {
+		status := manager.Status("slot-a")
+		return status.Running && status.PID == 202
+	})
+
+	want := "--dangerously-skip-permissions --chrome --verbose --resume conversation-1 --remote-control Project"
+	if got := strings.Join(runner.startAt(t, 1).Args, " "); got != want {
+		t.Fatalf("restart command = %q, want %q", got, want)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A slot that has adopted a conversation is not restarted just because the
+// caller still asks for the conversation it originally launched with.
+func TestActivateLeavesARunningSlotAloneAfterItAdoptsAConversation(t *testing.T) {
+	store := newFakeStore()
+	process := newFakeProcess(101, true, true)
+	status := []byte(`{"loggedIn":true,"email":"person@example.com"}`)
+	runner := &fakeRunner{
+		outputs:   [][]byte{status, status},
+		processes: []Process{process},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+	workspace := t.TempDir()
+	spec := WorkerSpec{ID: "slot-a", AccountID: account.ID, Workspace: workspace, Name: "Project"}
+
+	if err := manager.Activate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	store.linkConversation("slot-a", "conversation-1")
+	if err := manager.Activate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if runner.startCount() != 1 {
+		t.Fatalf("start count = %d, want 1: adopting a conversation restarted a live slot", runner.startCount())
+	}
+	if signals := process.signalsSeen(); len(signals) != 0 {
+		t.Fatalf("a live slot was signalled: %#v", signals)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestActivateRejectsUnsafeResumeIdentifier(t *testing.T) {
 	store := newFakeStore()
 	runner := &fakeRunner{outputs: [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)}}
@@ -512,10 +608,35 @@ func waitUntil(t *testing.T, timeout time.Duration, condition func() bool) {
 type fakeStore struct {
 	mu       sync.Mutex
 	accounts map[string]model.Account
+	slots    map[string]model.RemoteSession
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{accounts: make(map[string]model.Account)}
+	return &fakeStore{
+		accounts: make(map[string]model.Account),
+		slots:    make(map[string]model.RemoteSession),
+	}
+}
+
+func (s *fakeStore) GetRemoteSession(_ context.Context, id string) (model.RemoteSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot, ok := s.slots[id]
+	if !ok {
+		return model.RemoteSession{}, errors.New("not found")
+	}
+	return slot, nil
+}
+
+// linkConversation stands in for the checkpoint hook, which writes the
+// conversation a live slot is talking in back to its stored row.
+func (s *fakeStore) linkConversation(id, conversation string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot := s.slots[id]
+	slot.ID = id
+	slot.ResumeSessionID = conversation
+	s.slots[id] = slot
 }
 
 func (s *fakeStore) UpsertAccount(_ context.Context, account model.Account) (model.Account, error) {

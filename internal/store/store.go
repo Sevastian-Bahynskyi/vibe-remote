@@ -453,6 +453,35 @@ func (s *Store) SetRemoteSessionDesired(ctx context.Context, id, desired string)
 	return s.GetRemoteSession(ctx, id)
 }
 
+// LinkRemoteSessionConversation records the conversation a slot is currently
+// talking in, so the next restart resumes it instead of opening a fresh one.
+// The checkpoint hook calls this with the slot ID carried in its environment,
+// which is what keeps two slots on the same account and workspace from claiming
+// each other's conversation.
+//
+// A slot that no longer exists is not an error: Claude can outlive the
+// dashboard row that started it. Re-reporting the conversation a slot is
+// already linked to writes nothing, so an idle prompt loop does not churn the
+// row on every turn.
+func (s *Store) LinkRemoteSessionConversation(ctx context.Context, slotID, nativeSessionID string) error {
+	slotID = strings.TrimSpace(slotID)
+	conversation := strings.TrimSpace(nativeSessionID)
+	if slotID == "" || conversation == "" {
+		return nil
+	}
+	if !model.ValidResumeSessionID(conversation) {
+		return errors.New("invalid Claude conversation ID")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE remote_sessions SET resume_session_id = ?, updated_at = ?
+		WHERE id = ? AND resume_session_id <> ?`,
+		conversation, formatTime(s.now().UTC()), slotID, conversation)
+	if err != nil {
+		return fmt.Errorf("link remote session conversation: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) DeleteRemoteSession(ctx context.Context, id string) error {
 	return deleteByID(ctx, s.db, "remote_sessions", id)
 }

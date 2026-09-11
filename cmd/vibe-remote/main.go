@@ -107,6 +107,9 @@ func serve(layout paths.Layout) error {
 	service.RestoreInBackground(ctx, func(err error) {
 		fmt.Fprintln(os.Stderr, "vibe-remote: restore:", err)
 	})
+	// Checkpoint retention runs on its own schedule rather than depending on
+	// somebody having the dashboard open.
+	service.StartMaintenance(ctx)
 	result := make(chan error, 1)
 	go func() { result <- service.ListenAndServe() }()
 	select {
@@ -199,7 +202,14 @@ func runHook(layout paths.Layout, arguments []string) error {
 	service := checkpoint.NewService(repository, nil)
 	hookContext, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
-	response, err := service.HandleStdin(hookContext, provider, os.Getenv("VIBE_REMOTE_ACCOUNT_ID"), os.Stdin)
+	// Both values are inherited from the agent process this service started:
+	// the account attributes the checkpoint, and the slot binds the conversation
+	// to the Remote Control session it belongs to.
+	origin := checkpoint.HookOrigin{
+		AccountID: os.Getenv("VIBE_REMOTE_ACCOUNT_ID"),
+		SlotID:    os.Getenv("VIBE_REMOTE_SLOT_ID"),
+	}
+	response, err := service.HandleStdin(hookContext, provider, origin, os.Stdin)
 	if err != nil {
 		return err
 	}

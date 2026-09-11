@@ -61,7 +61,7 @@ func TestContinueConsumesOneHandoffAndEmitsBoundedContext(t *testing.T) {
 	}
 
 	payload := `{"session_id":"destination","turn_id":"destination-turn","hook_event_name":"UserPromptSubmit","prompt":"  continue\n","cwd":` + quotedJSON(workspace) + `}`
-	response, err := service.HandleStdin(ctx, model.ProviderClaude, "claude-main", strings.NewReader(payload))
+	response, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: "claude-main"}, strings.NewReader(payload))
 	if err != nil {
 		t.Fatalf("handle continue: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestContinueConsumesOneHandoffAndEmitsBoundedContext(t *testing.T) {
 		t.Fatalf("context is missing latest turn or git state: %q", contextText)
 	}
 
-	second, err := service.HandleStdin(ctx, model.ProviderClaude, "claude-main", strings.NewReader(`{
+	second, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: "claude-main"}, strings.NewReader(`{
 		"session_id":"destination-2",
 		"turn_id":"destination-turn-2",
 		"hook_event_name":"UserPromptSubmit",
@@ -126,7 +126,7 @@ func TestOnlyExactTrimmedLowercaseContinueConsumesHandoff(t *testing.T) {
 		t.Fatalf("create handoff: %v", err)
 	}
 
-	response, err := service.HandleStdin(ctx, model.ProviderClaude, "claude-main", strings.NewReader(`{
+	response, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: "claude-main"}, strings.NewReader(`{
 		"session_id":"destination",
 		"turn_id":"turn",
 		"hook_event_name":"UserPromptSubmit",
@@ -144,13 +144,98 @@ func TestOnlyExactTrimmedLowercaseContinueConsumesHandoff(t *testing.T) {
 	}
 }
 
+// The first prompt in a slot adopts that conversation, so a later daemon
+// restart resumes it instead of opening an empty one. The slot ID travels in
+// the hook's environment because two slots may share an account and workspace.
+func TestSlotHookAdoptsTheConversationItIsTalkingIn(t *testing.T) {
+	t.Parallel()
+
+	database := openCheckpointStore(t)
+	defer database.Close()
+	ctx := context.Background()
+	workspace := t.TempDir()
+	account, err := database.UpsertAccount(ctx, model.Account{Email: "person@example.com", Status: model.AccountAuthenticated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thinga, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name: "Thinga", AccountID: account.ID, WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name: "Sibling", AccountID: account.ID, WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(database, staticGitCapturer{snapshot: model.GitSnapshot{Root: workspace, CapturedAt: time.Now()}})
+
+	prompt := func(slotID, conversation string) {
+		t.Helper()
+		payload := `{"session_id":` + quotedJSON(conversation) + `,"turn_id":"turn-1","hook_event_name":"UserPromptSubmit","prompt":"work","cwd":` + quotedJSON(workspace) + `}`
+		if _, err := service.HandleStdin(ctx, model.ProviderClaude,
+			HookOrigin{AccountID: account.ID, SlotID: slotID}, strings.NewReader(payload)); err != nil {
+			t.Fatalf("handle prompt: %v", err)
+		}
+	}
+	prompt(thinga.ID, "conversation-thinga")
+	prompt(sibling.ID, "conversation-sibling")
+
+	linked, err := database.GetRemoteSession(ctx, thinga.ID)
+	if err != nil || linked.ResumeSessionID != "conversation-thinga" {
+		t.Fatalf("slot did not adopt its conversation: %#v, %v", linked, err)
+	}
+	siblingLinked, err := database.GetRemoteSession(ctx, sibling.ID)
+	if err != nil || siblingLinked.ResumeSessionID != "conversation-sibling" {
+		t.Fatalf("sibling slot took the wrong conversation: %#v, %v", siblingLinked, err)
+	}
+}
+
+// A hook that carries no slot is an agent this service did not start, such as a
+// Claude session the user ran by hand. It is still checkpointed, but it must not
+// claim any slot's conversation.
+func TestHookWithoutASlotLinksNothing(t *testing.T) {
+	t.Parallel()
+
+	database := openCheckpointStore(t)
+	defer database.Close()
+	ctx := context.Background()
+	workspace := t.TempDir()
+	account, err := database.UpsertAccount(ctx, model.Account{Email: "person@example.com", Status: model.AccountAuthenticated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name: "Thinga", AccountID: account.ID, WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(database, staticGitCapturer{snapshot: model.GitSnapshot{Root: workspace, CapturedAt: time.Now()}})
+
+	response, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID}, strings.NewReader(
+		`{"session_id":"hand-run","turn_id":"turn-1","hook_event_name":"UserPromptSubmit","prompt":"work","cwd":`+quotedJSON(workspace)+`}`))
+	if err != nil {
+		t.Fatalf("handle prompt: %v", err)
+	}
+	if response.Session.NativeSessionID != "hand-run" {
+		t.Fatalf("the conversation was not checkpointed: %#v", response.Session)
+	}
+	unlinked, err := database.GetRemoteSession(ctx, slot.ID)
+	if err != nil || unlinked.ResumeSessionID != "" {
+		t.Fatalf("a slotless hook claimed a slot: %#v, %v", unlinked, err)
+	}
+}
+
 func TestHandleStdinIgnoresUnknownEventAndDoesNotLogPayload(t *testing.T) {
 	t.Parallel()
 
 	database := openCheckpointStore(t)
 	defer database.Close()
 	service := NewService(database, staticGitCapturer{})
-	response, err := service.HandleStdin(context.Background(), model.ProviderClaude, "account", strings.NewReader(`{
+	response, err := service.HandleStdin(context.Background(), model.ProviderClaude, HookOrigin{AccountID: "account"}, strings.NewReader(`{
 		"session_id":"session",
 		"hook_event_name":"Notification",
 		"secret":"must-not-appear"
@@ -204,7 +289,7 @@ func TestServiceStillRecordsWhenGitCaptureFails(t *testing.T) {
 	database := openCheckpointStore(t)
 	defer database.Close()
 	service := NewService(database, staticGitCapturer{err: errors.New("git unavailable")})
-	response, err := service.HandleStdin(context.Background(), model.ProviderCodex, "", strings.NewReader(`{
+	response, err := service.HandleStdin(context.Background(), model.ProviderCodex, HookOrigin{}, strings.NewReader(`{
 		"session_id":"session",
 		"turn_id":"turn",
 		"hook_event_name":"UserPromptSubmit",

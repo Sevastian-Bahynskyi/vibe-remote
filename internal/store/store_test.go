@@ -523,6 +523,75 @@ func TestRemoteSessionsCoexistPerAccountAndWorkspace(t *testing.T) {
 	}
 }
 
+// Two slots can share one account and workspace, so the slot ID is the only
+// thing that tells their conversations apart.
+func TestLinkRemoteSessionConversationBindsOneSlotOnly(t *testing.T) {
+	t.Parallel()
+	moment := time.Date(2026, time.September, 11, 9, 0, 0, 0, time.UTC)
+	database := openTestStore(t, filepath.Join(t.TempDir(), "state.db"), func() time.Time { return moment })
+	defer database.Close()
+	ctx := context.Background()
+	account, err := database.UpsertAccount(ctx, model.Account{Email: "person@example.com", Status: model.AccountAuthenticated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := database.UpsertWorkspace(ctx, model.Workspace{Label: "Project", Path: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := func(name string) model.RemoteSession {
+		created, createErr := database.UpsertRemoteSession(ctx, model.RemoteSession{
+			Name: name, AccountID: account.ID, WorkspaceID: workspace.ID, WorkspacePath: workspace.Path,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return created
+	}
+	thinga := slot("Thinga")
+	other := slot("Other")
+
+	if err := database.LinkRemoteSessionConversation(ctx, thinga.ID, "conversation-1"); err != nil {
+		t.Fatalf("link conversation: %v", err)
+	}
+	linked, err := database.GetRemoteSession(ctx, thinga.ID)
+	if err != nil || linked.ResumeSessionID != "conversation-1" {
+		t.Fatalf("linked slot = %#v, %v", linked, err)
+	}
+	untouched, err := database.GetRemoteSession(ctx, other.ID)
+	if err != nil || untouched.ResumeSessionID != "" {
+		t.Fatalf("a sibling slot on the same account and workspace was linked: %#v, %v", untouched, err)
+	}
+
+	// A later turn in the same conversation must not churn the row, and a new
+	// conversation in the same slot replaces the link.
+	if err := database.LinkRemoteSessionConversation(ctx, thinga.ID, "conversation-1"); err != nil {
+		t.Fatalf("relink same conversation: %v", err)
+	}
+	if err := database.LinkRemoteSessionConversation(ctx, thinga.ID, "conversation-2"); err != nil {
+		t.Fatalf("link replacement conversation: %v", err)
+	}
+	relinked, err := database.GetRemoteSession(ctx, thinga.ID)
+	if err != nil || relinked.ResumeSessionID != "conversation-2" {
+		t.Fatalf("relinked slot = %#v, %v", relinked, err)
+	}
+
+	// Claude can outlive the dashboard row that started it.
+	if err := database.LinkRemoteSessionConversation(ctx, "rs_missing", "conversation-3"); err != nil {
+		t.Fatalf("linking a removed slot must not fail: %v", err)
+	}
+	if err := database.LinkRemoteSessionConversation(ctx, thinga.ID, "--dangerously-skip-permissions"); err == nil {
+		t.Fatal("an unsafe conversation ID was stored")
+	}
+	if err := database.LinkRemoteSessionConversation(ctx, thinga.ID, ""); err != nil {
+		t.Fatalf("an absent conversation must be ignored: %v", err)
+	}
+	final, err := database.GetRemoteSession(ctx, thinga.ID)
+	if err != nil || final.ResumeSessionID != "conversation-2" {
+		t.Fatalf("a rejected link changed the slot: %#v, %v", final, err)
+	}
+}
+
 func TestSessionPinRenameRetentionAndInterrupt(t *testing.T) {
 	t.Parallel()
 	base := time.Date(2026, time.September, 6, 12, 0, 0, 0, time.UTC)

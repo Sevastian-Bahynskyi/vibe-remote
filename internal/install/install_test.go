@@ -2,10 +2,101 @@ package install
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/paths"
+	systemstate "github.com/Sevastian-Bahynskyi/vibe-remote/internal/system"
 )
+
+func TestInstallManagedFilesDoesNotVerifyNewCodexHooks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	layout := paths.Layout{
+		Binary:            filepath.Join(root, "installed", "vibe-remote"),
+		CodexHooks:        filepath.Join(root, ".codex", "hooks.json"),
+		CodexConfig:       filepath.Join(root, ".codex", "config.toml"),
+		InstallRecord:     filepath.Join(root, "install-record.json"),
+		CodexHookVerified: filepath.Join(root, "codex-hook-verified"),
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.Binary), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.CodexConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.CodexConfig, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "new-vibe-remote")
+	if err := os.WriteFile(source, []byte("new executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installManagedFiles(layout, source); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(layout.CodexHookVerified); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verification marker exists before a real hook event: %v", err)
+	}
+}
+
+func TestInstallManagedFilesPreservesVerifiedCodexHooks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	layout := paths.Layout{
+		Binary:            filepath.Join(root, "installed", "vibe-remote"),
+		CodexHooks:        filepath.Join(root, ".codex", "hooks.json"),
+		CodexConfig:       filepath.Join(root, ".codex", "config.toml"),
+		InstallRecord:     filepath.Join(root, "install-record.json"),
+		CodexHookVerified: filepath.Join(root, "codex-hook-verified"),
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.Binary), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.CodexHooks), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.Binary, []byte("old executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.CodexConfig, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeCodexHooks(layout.CodexHooks, layout.Binary); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := systemstate.HookFingerprint(layout.CodexHooks, layout.Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.CodexHookVerified, []byte(verified+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "new-vibe-remote")
+	if err := os.WriteFile(source, []byte("new executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installManagedFiles(layout, source); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := systemstate.HookFingerprint(layout.CodexHooks, layout.Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := os.ReadFile(layout.CodexHookVerified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != current+"\n" {
+		t.Fatalf("verification marker = %q, want %q", marker, current+"\n")
+	}
+}
 
 func TestInstallClaudeHooksIsIdempotentAndRepairsOwnedHandler(t *testing.T) {
 	t.Parallel()

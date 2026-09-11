@@ -6,6 +6,7 @@ Vibe Remote is a small macOS service for choosing which Claude subscription is a
 
 - Stores any number of independently authenticated Claude Code profiles, labeled by email.
 - Runs as many managed interactive Claude Remote Control sessions as you start, in parallel, each pinned to one account and workspace and each either a new conversation or an earlier one resumed by ID.
+- Remembers which conversation each session is talking in, so a restarted service resumes it instead of opening an empty one.
 - Exposes a mobile dashboard only through Tailscale Serve at `/vibe-remote/`; the app itself listens only on `127.0.0.1:47173`.
 - Captures provider-neutral session checkpoints from official Claude and Codex hooks without an LLM call.
 - Creates destination-scoped, 48-hour, one-use handoffs. Type exactly `continue` in the selected destination to inject the latest eight captured turns plus live Git state.
@@ -50,7 +51,7 @@ Open the URL shown by:
 3. Before using a workspace remotely for the first time, run Claude locally in it with the desired profile and accept Claude's workspace trust prompt. Vibe Remote reports this explicitly if it is missing.
 4. In Codex, open `/hooks` once and trust the installed Vibe Remote hooks. The dashboard changes from `Installed · verify /hooks` to `Verified` after an actual hook event.
 5. Press **New** under **Remote sessions**, choose the account, the workspace, and either **New conversation** or an earlier Claude checkpoint to resume. The dashboard reports success only after Claude registers an interactive Remote Control bridge.
-6. On the phone, sign into the matching Claude account and tap **Open live session** on that card in the dashboard.
+6. On the phone, sign into the matching Claude account and tap **Open live session** on that card in the dashboard. On the Mac itself the same card offers **Open in Claude Desktop**, which hands the session's Remote Control link to the Claude app instead of a browser tab; **Open in browser** stays next to it.
 
 ## Running and switching sessions
 
@@ -60,7 +61,11 @@ Start as many sessions as you need. Each one gets a distinct Remote Control name
 
 Removing a session stops it and forgets the slot; its captured checkpoints are kept. Sessions that were running are restored automatically when the service restarts.
 
+A session started as **New conversation** adopts the first conversation it actually talks in, and keeps it from then on: a restarted service, or a worker the supervisor restarts after a crash, resumes that conversation rather than opening an empty one. The binding comes from the slot identity carried in the worker's environment and reported by its checkpoint hook, so two sessions sharing one account and workspace never claim each other's conversation. **Move / edit** shows the adopted conversation as the default and leaves it alone unless you pick another one or choose **Start a new conversation**, which is the explicit way to reset a slot. Moving a session to another account or workspace drops the link, because a conversation belongs where it started.
+
 Workspaces and session checkpoints live under **Settings**, collapsed by default.
+
+The dashboard is the same page on the Mac and on the phone. Opened on the Mac it lays out for a laptop window — sessions and accounts side by side, each card's controls on the row with the name they act on — and the desktop-only actions appear, decided by the server: Tailscale Serve proxies to the same loopback listener, so a request is treated as local only when it carries no forwarding headers.
 
 ## Handoff workflow
 

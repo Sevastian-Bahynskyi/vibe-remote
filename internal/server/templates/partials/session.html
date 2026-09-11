@@ -1,0 +1,114 @@
+{{/*
+  Two rules hold this file together, and both are load-bearing:
+
+  1. Every region below renders its own root element, id and refresh attributes
+     included. A full page and an htmx swap therefore produce byte-identical
+     markup, and a swapped-in element re-installs its own behaviour.
+  2. Self-refreshing regions are always swapped outerHTML. Put the refresh
+     attributes on a wrapper and swap innerHTML instead, and the region refreshes
+     exactly once and then goes quiet.
+*/}}
+
+{{define "session-list"}}
+<section id="session-list" class="cards" data-refresh="ui/fragments/sessions">
+  {{range .Sessions}}{{template "session-card" .}}{{end}}
+  {{if not .Sessions}}<p class="empty">No sessions yet.</p>{{end}}
+</section>
+{{end}}
+
+{{define "session-card"}}
+<article class="card" id="session-{{.ID}}">
+  <a class="card-open" href="{{screen "session" .ID}}" hx-get="{{screen "session" .ID}}" hx-target="#app" hx-push-url="true">
+    <span class="dot" data-tone="{{.Tone}}" aria-hidden="true"></span>
+    <span class="card-text">
+      <span class="card-name">{{.Name}}</span>
+      <span class="card-meta">{{.AccountEmail}} · {{.WorkspaceLabel}}</span>
+    </span>
+    <span class="card-status" data-tone="{{.Tone}}">{{.Status}}</span>
+  </a>
+  <div class="card-actions">
+    {{if .RemoteURL}}
+      <a class="btn btn-primary" href="{{.RemoteURL}}" target="_blank" rel="noopener noreferrer">Open in Claude</a>
+    {{end}}
+    {{if .CanStart}}
+      <form hx-post="ui/sessions/{{.ID}}/start" hx-target="#session-list" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="from" value="home">
+        <button class="btn" type="submit">Start<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+      </form>
+    {{end}}
+  </div>
+</article>
+{{end}}
+
+{{define "session-detail"}}
+<section id="session-detail" class="detail">
+  {{with .Session}}
+  <div class="detail-head">
+    <span class="dot dot-large" data-tone="{{.Tone}}" aria-hidden="true"></span>
+    <div>
+      <h2>{{.Name}}</h2>
+      <p class="detail-status" data-tone="{{.Tone}}">{{.Status}}</p>
+    </div>
+  </div>
+
+  {{if .LastError}}<p class="detail-error">{{.LastError}}</p>{{end}}
+
+  <dl class="facts">
+    <div><dt>Account</dt><dd>{{.AccountEmail}}</dd></div>
+    <div><dt>Workspace</dt><dd>{{.WorkspaceLabel}}</dd></div>
+    <div><dt>Folder</dt><dd class="mono">{{.WorkspacePath}}</dd></div>
+    <div><dt>Conversation</dt><dd>{{.ConversationLabel}}</dd></div>
+    {{if .PID}}<div><dt>Process</dt><dd class="mono">{{.PID}}</dd></div>{{end}}
+  </dl>
+  {{end}}
+
+  {{if .Confirm}}
+    {{template "confirm" .Confirm}}
+  {{else}}
+    {{with .Session}}
+    <div class="detail-actions">
+      {{if .RemoteURL}}
+        <a class="btn btn-primary btn-wide" href="{{.RemoteURL}}" target="_blank" rel="noopener noreferrer">Open in Claude</a>
+      {{end}}
+      {{if .CanOpenDesktop}}
+        <form hx-post="ui/sessions/{{.ID}}/open-desktop" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+          <button class="btn btn-wide" type="submit">Open in Claude Desktop</button>
+        </form>
+      {{end}}
+      {{if .CanStart}}
+        <form hx-post="ui/sessions/{{.ID}}/start" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+          <button class="btn btn-wide" type="submit">Start session<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+        </form>
+      {{end}}
+      {{if .CanRestart}}
+        <form hx-post="ui/sessions/{{.ID}}/restart" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+          <button class="btn btn-wide" type="submit">Restart session<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+        </form>
+      {{end}}
+      {{if .CanStop}}
+        <form hx-post="ui/sessions/{{.ID}}/stop" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+          <button class="btn btn-wide" type="submit">Stop session<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+        </form>
+      {{end}}
+      <a class="btn btn-wide" href="{{screen "session-edit" .ID}}" hx-get="{{screen "session-edit" .ID}}" hx-target="#app" hx-push-url="true">Change account, workspace or conversation</a>
+      <form hx-post="ui/sessions/{{.ID}}/delete" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <button class="btn btn-danger btn-wide" type="submit">Delete session</button>
+      </form>
+    </div>
+    {{end}}
+  {{end}}
+</section>
+{{end}}
+
+{{define "confirm"}}
+<div class="confirm" data-testid="confirm">
+  <p class="confirm-message">{{.Message}}</p>
+  <div class="confirm-actions">
+    <form hx-post="{{.Post}}" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+      {{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+      <button class="btn {{if .Danger}}btn-danger{{else}}btn-primary{{end}}" type="submit">{{.Label}}<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+    </form>
+    <a class="btn" href="{{.Cancel}}" hx-get="{{.Cancel}}" hx-target="#session-detail" hx-swap="outerHTML">Cancel</a>
+  </div>
+</div>
+{{end}}

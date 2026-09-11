@@ -1,0 +1,91 @@
+{{define "home"}}
+{{if .Sessions.CanCreate}}
+  <a class="cta" href="{{screen "session-new" ""}}" hx-get="{{screen "session-new" ""}}" hx-target="#app" hx-push-url="true">
+    <span class="cta-plus" aria-hidden="true">+</span>Start a session
+  </a>
+{{else}}
+  <p class="blocker">{{.Sessions.Blocker}}</p>
+{{end}}
+
+{{template "alerts" .Alerts}}
+{{template "session-list" .Sessions}}
+
+<nav class="nav-rows" aria-label="More">
+  <a class="nav-row" href="{{screen "accounts" ""}}" hx-get="{{screen "accounts" ""}}" hx-target="#app" hx-push-url="true">
+    <span>Accounts</span><span class="nav-count">{{.Counts.Accounts}}</span>
+  </a>
+  <a class="nav-row" href="{{screen "workspaces" ""}}" hx-get="{{screen "workspaces" ""}}" hx-target="#app" hx-push-url="true">
+    <span>Workspaces</span><span class="nav-count">{{.Counts.Workspaces}}</span>
+  </a>
+  <a class="nav-row" href="{{screen "conversations" ""}}" hx-get="{{screen "conversations" ""}}" hx-target="#app" hx-push-url="true">
+    <span>Conversations</span><span class="nav-count">{{.Counts.Conversations}}</span>
+  </a>
+  <a class="nav-row" href="{{screen "system" ""}}" hx-get="{{screen "system" ""}}" hx-target="#app" hx-push-url="true">
+    <span>System</span>
+  </a>
+  <a class="nav-row" href="{{screen "guide" ""}}" hx-get="{{screen "guide" ""}}" hx-target="#app" hx-push-url="true">
+    <span>How to use</span>
+  </a>
+</nav>
+{{end}}
+
+{{define "session-new"}}{{template "session-form" .Form}}{{end}}
+
+{{define "session"}}{{template "session-detail" .Session}}{{end}}
+
+{{define "session-edit"}}{{template "session-form" .Form}}{{end}}
+
+{{define "accounts"}}
+<form class="form form-compact" hx-post="ui/accounts" hx-target="#account-list" hx-swap="outerHTML" hx-disabled-elt="find button">
+  <label class="field-label" for="account-email">Add a Claude account</label>
+  <div class="field-row">
+    <input id="account-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+    <button class="btn btn-primary" type="submit">Add<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+  </div>
+</form>
+{{template "account-list" .Accounts}}
+{{end}}
+
+{{define "workspaces"}}
+<form class="form form-compact" hx-post="ui/workspaces" hx-target="#workspace-list" hx-swap="outerHTML" hx-disabled-elt="find button">
+  <label class="field-label" for="workspace-label">Add a workspace</label>
+  <input id="workspace-label" name="label" type="text" autocomplete="off" placeholder="Name" required>
+  <div class="field-row">
+    <input id="workspace-path" name="path" type="text" autocomplete="off" placeholder="/Users/you/project" required>
+    <button class="btn btn-primary" type="submit">Add</button>
+  </div>
+</form>
+{{template "workspace-list" .Workspaces}}
+{{end}}
+
+{{define "conversations"}}{{template "conversation-list" .Conversations}}{{end}}
+
+{{define "conversation"}}{{template "conversation-detail" .Conversation}}{{end}}
+
+{{define "system"}}{{template "system-panel" .System}}{{end}}
+
+{{define "guide"}}
+<article class="guide">
+  <h2>Start working from your phone</h2>
+  <ol>
+    <li>Add a Claude account and a workspace.</li>
+    <li>Press <strong>Start a session</strong>, then choose the account, the workspace, and whether to begin a new conversation or continue an earlier one.</li>
+    <li>Sign in to the same Claude account on your phone, then press <strong>Open in Claude</strong> on the session.</li>
+  </ol>
+
+  <h2>Running several at once</h2>
+  <p>Each session is independent and gets its own name in the Claude app. Starting, stopping or deleting one never disturbs the others.</p>
+
+  <h2>Moving a session</h2>
+  <p><strong>Change account, workspace or conversation</strong> restarts the session with the new settings. A conversation belongs to the account and workspace it started in, so moving a session elsewhere begins a new one.</p>
+
+  <h2>Continuing in another agent</h2>
+  <p>Open a conversation, choose where to continue it, then open that agent in the same workspace and type exactly <code>continue</code>. The handoff carries the last few turns plus the current Git state, and lasts 48 hours.</p>
+
+  <h2>First use of a workspace</h2>
+  <p>Claude asks once, locally, whether it may work in a folder. Run Claude on the Mac in that folder with the chosen account and accept the prompt. Vibe Remote reports this rather than bypassing it.</p>
+
+  <h2>Staying reachable</h2>
+  <p>The Mac must be awake and on the tailnet. On mains power Vibe Remote holds off idle sleep while a session is serving; on battery it does not, and closing the lid disconnects either way.</p>
+</article>
+{{end}}

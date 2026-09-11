@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,8 +37,20 @@ type Server struct {
 	binary  string
 	http    *http.Server
 	started time.Time
+	views   *views
 	opMu    sync.Mutex
+
+	// System health shells out to pmset and tailscale, so it is cached briefly:
+	// the dashboard asks for it on a timer and a burst of requests must not turn
+	// into a burst of subprocesses on a Mac this service deliberately keeps awake.
+	healthMu    sync.Mutex
+	healthValue systemstate.Health
+	healthAt    time.Time
 }
+
+// healthTTL is short enough that a change the user just made shows up on the
+// next refresh, and long enough that polling costs nothing.
+const healthTTL = 10 * time.Second
 
 type Options struct {
 	Store  *store.Store
@@ -50,9 +63,15 @@ func New(options Options) (*Server, error) {
 	if options.Store == nil || options.Claude == nil {
 		return nil, errors.New("server requires store and Claude manager")
 	}
+	// Parsed once, at startup: a broken template must fail the binary rather than
+	// one request on a phone.
+	parsed, err := parseViews()
+	if err != nil {
+		return nil, err
+	}
 	server := &Server{
 		store: options.Store, claude: options.Claude, layout: options.Layout,
-		binary: options.Binary, started: time.Now().UTC(),
+		binary: options.Binary, started: time.Now().UTC(), views: parsed,
 	}
 	mux := http.NewServeMux()
 	staticFS, err := fs.Sub(assets, "static")
@@ -60,7 +79,7 @@ func New(options Options) (*Server, error) {
 		return nil, fmt.Errorf("load dashboard assets: %w", err)
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("GET /{$}", server.index)
+	mux.HandleFunc("GET /{$}", server.dashboard)
 	mux.HandleFunc("GET /api/state", server.state)
 	mux.HandleFunc("POST /api/accounts", server.addAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", server.removeAccount)
@@ -69,6 +88,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("POST /api/remote-sessions/{id}/start", server.startRemoteSession)
 	mux.HandleFunc("POST /api/remote-sessions/{id}/restart", server.restartRemoteSession)
 	mux.HandleFunc("POST /api/remote-sessions/{id}/stop", server.stopRemoteSession)
+	mux.HandleFunc("POST /api/remote-sessions/{id}/open-desktop", server.openRemoteSessionDesktop)
 	mux.HandleFunc("DELETE /api/remote-sessions/{id}", server.deleteRemoteSession)
 	mux.HandleFunc("POST /api/auth/{id}/refresh", server.refreshAccount)
 	mux.HandleFunc("POST /api/workspaces", server.addWorkspace)
@@ -76,6 +96,35 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("POST /api/handoffs", server.createHandoff)
 	mux.HandleFunc("PATCH /api/sessions/{id}", server.updateSession)
 	mux.HandleFunc("POST /api/install-hooks", server.installHooks)
+
+	// The dashboard. These render HTML; /api/* above stays a JSON API and is no
+	// longer what the dashboard talks to.
+	//
+	// Every screen is served by the one route registered above, addressed by
+	// ?screen=, so the document URL never gains a directory level and the page's
+	// relative URLs keep resolving against the mount root — see screenURL. The
+	// routes below are only ever fetched by htmx, never shown in the address bar,
+	// so they are free to be paths.
+	mux.HandleFunc("GET /ui/fragments/sessions", server.uiFragmentSessions)
+	mux.HandleFunc("GET /ui/fragments/alerts", server.uiFragmentAlerts)
+	mux.HandleFunc("GET /ui/fragments/session/{id}", server.uiFragmentSession)
+	mux.HandleFunc("GET /ui/fragments/conversation-options", server.uiFragmentConversationOptions)
+
+	mux.HandleFunc("POST /ui/sessions", server.uiCreateSession)
+	mux.HandleFunc("POST /ui/sessions/{id}", server.uiUpdateSession)
+	mux.HandleFunc("POST /ui/sessions/{id}/start", server.uiSessionLifecycle("start"))
+	mux.HandleFunc("POST /ui/sessions/{id}/restart", server.uiSessionLifecycle("restart"))
+	mux.HandleFunc("POST /ui/sessions/{id}/stop", server.uiSessionLifecycle("stop"))
+	mux.HandleFunc("POST /ui/sessions/{id}/open-desktop", server.uiOpenDesktop)
+	mux.HandleFunc("POST /ui/sessions/{id}/delete", server.uiDeleteSession)
+	mux.HandleFunc("POST /ui/accounts", server.uiAddAccount)
+	mux.HandleFunc("POST /ui/accounts/{id}/refresh", server.uiRefreshAccount)
+	mux.HandleFunc("POST /ui/accounts/{id}/delete", server.uiDeleteAccount)
+	mux.HandleFunc("POST /ui/workspaces", server.uiAddWorkspace)
+	mux.HandleFunc("POST /ui/workspaces/{id}/delete", server.uiDeleteWorkspace)
+	mux.HandleFunc("POST /ui/conversations/{id}", server.uiUpdateConversation)
+	mux.HandleFunc("POST /ui/handoffs", server.uiCreateHandoff)
+	mux.HandleFunc("POST /ui/install-hooks", server.uiInstallHooks)
 	server.http = &http.Server{
 		Addr:              paths.ListenAddr,
 		Handler:           server.securityHeaders(server.requireMutationHeader(mux)),
@@ -187,52 +236,22 @@ func workerSpec(remote model.RemoteSession) claude.WorkerSpec {
 	}
 }
 
-func (s *Server) index(response http.ResponseWriter, _ *http.Request) {
-	data, err := assets.ReadFile("static/index.html")
-	if err != nil {
-		http.Error(response, "Dashboard unavailable", http.StatusInternalServerError)
-		return
-	}
-	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = response.Write(data)
-}
-
 func (s *Server) state(response http.ResponseWriter, request *http.Request) {
-	_, _ = s.store.CleanupClosedSessions(request.Context(), time.Now().Add(-30*24*time.Hour))
-	accounts, err := s.store.ListAccounts(request.Context())
+	// Retention also runs on a timer (see StartMaintenance); this call is kept so
+	// the JSON route behaves exactly as it always has.
+	s.sweepClosedSessions(request.Context())
+	state, err := s.snapshot(request.Context(), isLocalRequest(request))
 	if err != nil {
 		writeError(response, err, http.StatusInternalServerError)
 		return
 	}
-	workspaces, err := s.store.ListWorkspaces(request.Context())
-	if err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
-	}
-	sessions, err := s.store.ListSessions(request.Context(), store.SessionFilter{Limit: 250})
-	if err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
-	}
-	remotes, err := s.store.ListRemoteSessions(request.Context())
-	if err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
-	}
-	s.decorateRemoteSessions(remotes)
-	decorateAccountActivity(accounts, remotes)
-	decorateSessions(sessions, accounts)
-	health := systemstate.Inspect(request.Context(), s.layout.CodexHooks, s.layout.CodexHookVerified, s.layout.Binary)
-	powerWarning := ""
-	if !health.OnACPower {
-		powerWarning = "This Mac is on battery and may become unreachable."
-	}
+	health := state.Health
 	writeJSON(response, http.StatusOK, map[string]any{
-		"accounts":       accounts,
-		"workspaces":     workspaces,
-		"sessions":       sessions,
-		"remoteSessions": remotes,
-		"runningCount":   s.claude.RunningCount(),
+		"accounts":       state.Accounts,
+		"workspaces":     state.Workspaces,
+		"sessions":       state.Sessions,
+		"remoteSessions": state.Remotes,
+		"runningCount":   state.Running,
 		"system": map[string]any{
 			"tailnetOnly":     health.TailnetOnly,
 			"serveReady":      health.ServeReady,
@@ -242,10 +261,12 @@ func (s *Server) state(response http.ResponseWriter, request *http.Request) {
 			"hooksHealthy":    health.CodexHooks,
 			"hooksInstalled":  health.CodexHooksInstalled,
 			"onAcPower":       health.OnACPower,
-			"powerWarning":    powerWarning,
+			"powerWarning":    state.PowerWarning,
 			"claudeInstalled": health.ClaudeBinary,
 			"codexInstalled":  health.CodexBinary,
-			"startedAt":       s.started,
+			"claudeDesktop":   health.ClaudeDesktop,
+			"onThisMac":       state.OnThisMac,
+			"startedAt":       state.StartedAt,
 		},
 	})
 }
@@ -312,12 +333,12 @@ func (s *Server) addAccount(response http.ResponseWriter, request *http.Request)
 	var body struct {
 		Email string `json:"email"`
 	}
-	if err := decodeJSON(request, &body); err != nil || strings.TrimSpace(body.Email) == "" {
+	if err := decodeJSON(request, &body); err != nil {
 		writeError(response, errors.New("a valid email is required"), http.StatusBadRequest)
 		return
 	}
-	if err := launchAccountLogin(s.binary, body.Email); err != nil {
-		writeError(response, err, http.StatusInternalServerError)
+	if err := s.addAccountOp(body.Email); err != nil {
+		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusAccepted, map[string]any{
@@ -326,82 +347,37 @@ func (s *Server) addAccount(response http.ResponseWriter, request *http.Request)
 }
 
 func (s *Server) removeAccount(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
-	id := request.PathValue("id")
 	deleteCheckpoints := request.URL.Query().Get("deleteCheckpoints") == "true"
-	removeErr := error(nil)
-	if deleteCheckpoints {
-		removeErr = s.claude.RemoveProfile(request.Context(), id, false)
-	} else {
-		removeErr = s.claude.Remove(request.Context(), id, false)
-	}
-	if removeErr != nil {
-		status := http.StatusBadRequest
-		if errors.Is(removeErr, claude.ErrStopTimeout) {
-			status = http.StatusConflict
-		}
-		writeError(response, removeErr, status)
+	if err := s.removeAccountOp(request.Context(), request.PathValue("id"), deleteCheckpoints); err != nil {
+		writeError(response, err, statusOf(err))
 		return
-	}
-	if deleteCheckpoints {
-		if err := s.store.DeleteAccountAndSessions(request.Context(), id); err != nil {
-			writeError(response, err, http.StatusInternalServerError)
-			return
-		}
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"message": "Claude account removed."})
 }
 
+// remoteSessionRequest carries a slot edit. ResumeSessionID is a pointer so an
+// omitted field keeps the conversation the slot is already linked to, while an
+// explicit empty string is the deliberate "new conversation" reset. Without that
+// distinction, renaming a slot would silently detach its live thread.
 type remoteSessionRequest struct {
-	Name            string `json:"name"`
-	AccountID       string `json:"accountId"`
-	WorkspaceID     string `json:"workspaceId"`
-	ResumeSessionID string `json:"resumeSessionId"`
-	Force           bool   `json:"force"`
+	Name            string  `json:"name"`
+	AccountID       string  `json:"accountId"`
+	WorkspaceID     string  `json:"workspaceId"`
+	ResumeSessionID *string `json:"resumeSessionId"`
+	Force           bool    `json:"force"`
 }
 
 func (s *Server) createRemoteSession(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
 	var body remoteSessionRequest
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	account, workspace, err := s.resolveRouting(request.Context(), body.AccountID, body.WorkspaceID)
+	remote, err := s.createSlotOp(request.Context(), body)
 	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
+		writeError(response, err, statusOf(err))
 		return
 	}
-	resume, err := s.resolveResume(request.Context(), body.ResumeSessionID, account.ID, workspace.Path)
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	existing, err := s.store.ListRemoteSessions(request.Context())
-	if err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
-	}
-	remote, err := s.store.UpsertRemoteSession(request.Context(), model.RemoteSession{
-		Name:            uniqueSessionName(body.Name, account.Email, workspace, existing, ""),
-		AccountID:       account.ID,
-		WorkspaceID:     workspace.ID,
-		WorkspacePath:   workspace.Path,
-		ResumeSessionID: resume,
-		Desired:         model.DesiredRunning,
-	})
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	if err := s.startRemote(request.Context(), remote, body.Force); err != nil {
-		_ = s.store.DeleteRemoteSession(request.Context(), remote.ID)
-		writeError(response, err, startFailureStatus(err))
-		return
-	}
-	_ = s.store.SelectWorkspace(request.Context(), workspace.ID)
 	writeJSON(response, http.StatusCreated, map[string]any{
 		"remoteSession": remote,
 		"message":       remote.Name + " is ready for Claude Remote Control.",
@@ -411,65 +387,16 @@ func (s *Server) createRemoteSession(response http.ResponseWriter, request *http
 // updateRemoteSession moves a session to another account, workspace, or
 // conversation and restarts it so the change takes effect.
 func (s *Server) updateRemoteSession(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
 	var body remoteSessionRequest
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	remote, err := s.updateSlotOp(request.Context(), request.PathValue("id"), body)
 	if err != nil {
-		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
+		writeError(response, err, statusOf(err))
 		return
 	}
-	accountID := remote.AccountID
-	if strings.TrimSpace(body.AccountID) != "" {
-		accountID = body.AccountID
-	}
-	workspaceID := remote.WorkspaceID
-	if strings.TrimSpace(body.WorkspaceID) != "" {
-		workspaceID = body.WorkspaceID
-	}
-	account, workspace, err := s.resolveRouting(request.Context(), accountID, workspaceID)
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	resume, err := s.resolveResume(request.Context(), body.ResumeSessionID, account.ID, workspace.Path)
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	if err := s.stopRemote(request.Context(), remote, body.Force); err != nil {
-		writeError(response, err, stopFailureStatus(err))
-		return
-	}
-	existing, err := s.store.ListRemoteSessions(request.Context())
-	if err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
-	}
-	name := remote.Name
-	if strings.TrimSpace(body.Name) != "" || account.ID != remote.AccountID || workspace.ID != remote.WorkspaceID {
-		name = uniqueSessionName(body.Name, account.Email, workspace, existing, remote.ID)
-	}
-	remote.Name = name
-	remote.AccountID = account.ID
-	remote.WorkspaceID = workspace.ID
-	remote.WorkspacePath = workspace.Path
-	remote.ResumeSessionID = resume
-	remote.Desired = model.DesiredRunning
-	remote, err = s.store.UpsertRemoteSession(request.Context(), remote)
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	if err := s.startRemote(request.Context(), remote, true); err != nil {
-		writeError(response, err, startFailureStatus(err))
-		return
-	}
-	_ = s.store.SelectWorkspace(request.Context(), workspace.ID)
 	writeJSON(response, http.StatusOK, map[string]any{
 		"remoteSession": remote,
 		"message":       remote.Name + " restarted with the new settings.",
@@ -485,31 +412,14 @@ func (s *Server) restartRemoteSession(response http.ResponseWriter, request *htt
 }
 
 func (s *Server) remoteSessionLifecycle(response http.ResponseWriter, request *http.Request, restart bool) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
 	var body remoteSessionRequest
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	remote, err := s.lifecycleSlotOp(request.Context(), request.PathValue("id"), restart, body.Force)
 	if err != nil {
-		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
-		return
-	}
-	if restart {
-		if err := s.stopRemote(request.Context(), remote, body.Force); err != nil {
-			writeError(response, err, stopFailureStatus(err))
-			return
-		}
-	}
-	remote, err = s.store.SetRemoteSessionDesired(request.Context(), remote.ID, model.DesiredRunning)
-	if err != nil {
-		writeError(response, err, http.StatusInternalServerError)
-		return
-	}
-	if err := s.startRemote(request.Context(), remote, restart || body.Force); err != nil {
-		writeError(response, err, startFailureStatus(err))
+		writeError(response, err, statusOf(err))
 		return
 	}
 	verb := "started"
@@ -523,43 +433,85 @@ func (s *Server) remoteSessionLifecycle(response http.ResponseWriter, request *h
 }
 
 func (s *Server) stopRemoteSession(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
 	var body remoteSessionRequest
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+	remote, err := s.stopSlotOp(request.Context(), request.PathValue("id"), body.Force)
 	if err != nil {
-		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
-		return
-	}
-	if err := s.stopRemote(request.Context(), remote, body.Force); err != nil {
-		writeError(response, err, stopFailureStatus(err))
-		return
-	}
-	if _, err := s.store.SetRemoteSessionDesired(request.Context(), remote.ID, model.DesiredStopped); err != nil {
-		writeError(response, err, http.StatusInternalServerError)
+		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"message": remote.Name + " stopped. Its checkpoints are kept."})
 }
 
-func (s *Server) deleteRemoteSession(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
-	remote, err := s.store.GetRemoteSession(request.Context(), request.PathValue("id"))
+// openRemoteSessionDesktop hands a running session's Remote Control link to
+// Claude Desktop on this Mac. The tailnet is refused because the app would open
+// here, not on the phone that asked.
+func (s *Server) openRemoteSessionDesktop(response http.ResponseWriter, request *http.Request) {
+	remote, err := s.openDesktopOp(request.Context(), request.PathValue("id"), isLocalRequest(request))
 	if err != nil {
-		writeError(response, errors.New("remote session not found"), http.StatusNotFound)
+		writeError(response, err, statusOf(err))
 		return
 	}
-	if err := s.stopRemote(request.Context(), remote, true); err != nil {
-		writeError(response, err, stopFailureStatus(err))
-		return
+	writeJSON(response, http.StatusOK, map[string]any{"message": remote.Name + " opened in Claude Desktop."})
+}
+
+// isLocalRequest reports whether the dashboard is being used on this Mac.
+// Tailscale Serve proxies to the same loopback listener, so a loopback peer
+// alone proves nothing; a proxied request always carries forwarding headers.
+func isLocalRequest(request *http.Request) bool {
+	for _, header := range []string{"X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "Tailscale-User-Login"} {
+		if request.Header.Get(header) != "" {
+			return false
+		}
 	}
-	if err := s.store.DeleteRemoteSession(request.Context(), remote.ID); err != nil {
-		writeError(response, err, http.StatusNotFound)
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		host = request.RemoteAddr
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+// isClaudeRemoteURL guards what is handed to `open`, so only a Remote Control
+// link Claude itself printed can reach the desktop app.
+func isClaudeRemoteURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" {
+		return false
+	}
+	if parsed.Hostname() != "claude.ai" && parsed.Hostname() != "claude.com" {
+		return false
+	}
+	return parsed.Path == "/code" || strings.HasPrefix(parsed.Path, "/code/")
+}
+
+func claudeDesktopDeepLink(value string) (string, bool) {
+	if !isClaudeRemoteURL(value) {
+		return "", false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	sessionID, ok := strings.CutPrefix(parsed.Path, "/code/")
+	if !ok || (!strings.HasPrefix(sessionID, "cse_") && !strings.HasPrefix(sessionID, "session_")) {
+		return "", false
+	}
+	for _, character := range sessionID {
+		if character != '_' && character != '-' && (character < '0' || character > '9') && (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') {
+			return "", false
+		}
+	}
+	return (&url.URL{Scheme: "claude", Host: "claude.ai", Path: "/code/" + sessionID}).String(), true
+}
+
+func (s *Server) deleteRemoteSession(response http.ResponseWriter, request *http.Request) {
+	remote, err := s.deleteSlotOp(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"message": remote.Name + " removed. Its checkpoints are kept."})
@@ -580,6 +532,23 @@ func (s *Server) startRemote(ctx context.Context, remote model.RemoteSession, fo
 	return s.claude.Activate(ctx, spec)
 }
 
+// restatedError presents its own message while keeping the underlying sentinel
+// reachable through errors.Is. Callers that must decide whether to offer a
+// forced retry read the sentinel; the user reads the sentence. Without this the
+// two are the same string, and rewording the sentence silently changes the
+// status code.
+type restatedError struct {
+	message string
+	cause   error
+}
+
+func (e *restatedError) Error() string { return e.message }
+func (e *restatedError) Unwrap() error { return e.cause }
+
+func restate(message string, cause error) error {
+	return &restatedError{message: message, cause: cause}
+}
+
 // stopRemote stops one slot, checkpointing any Claude turn that was still
 // running so no captured work is lost.
 func (s *Server) stopRemote(ctx context.Context, remote model.RemoteSession, force bool) error {
@@ -590,7 +559,7 @@ func (s *Server) stopRemote(ctx context.Context, remote model.RemoteSession, for
 	active := s.activePromptedSessions(ctx, remote.AccountID, remote.WorkspacePath)
 	if err := s.claude.Deactivate(ctx, remote.ID, force); err != nil {
 		if errors.Is(err, claude.ErrStopTimeout) && !force {
-			return errors.New("this session has an unfinished Claude turn; confirm a forced stop")
+			return restate("this session has an unfinished Claude turn; confirm a forced stop", err)
 		}
 		return err
 	}
@@ -617,14 +586,22 @@ func (s *Server) resolveRouting(ctx context.Context, accountID, workspaceID stri
 	return account, workspace, nil
 }
 
-// resolveResume accepts a stored checkpoint ID or a native Claude session ID and
-// returns the native ID to resume. An empty value starts a new conversation.
-func (s *Server) resolveResume(ctx context.Context, requested, accountID, workspacePath string) (string, error) {
-	requested = strings.TrimSpace(requested)
-	if requested == "" {
+// resolveResume turns a requested conversation into the native Claude ID the
+// worker resumes. A request names a stored checkpoint; an omitted request keeps
+// kept, the conversation the slot is already linked to; an empty request is the
+// explicit reset to a fresh conversation.
+func (s *Server) resolveResume(ctx context.Context, requested *string, kept, accountID, workspacePath string) (string, error) {
+	if requested == nil {
+		if kept != "" && !model.ValidResumeSessionID(kept) {
+			return "", errors.New("this session's stored conversation is unreadable")
+		}
+		return kept, nil
+	}
+	trimmed := strings.TrimSpace(*requested)
+	if trimmed == "" {
 		return "", nil
 	}
-	session, err := s.store.GetSession(ctx, requested)
+	session, err := s.store.GetSession(ctx, trimmed)
 	if err != nil {
 		return "", errors.New("that checkpoint is no longer available")
 	}
@@ -679,21 +656,19 @@ func startFailureStatus(err error) int {
 }
 
 func stopFailureStatus(err error) int {
-	if errors.Is(err, claude.ErrStopTimeout) || strings.Contains(err.Error(), "forced stop") {
+	if errors.Is(err, claude.ErrStopTimeout) {
 		return http.StatusConflict
 	}
 	return http.StatusBadRequest
 }
 
 func (s *Server) refreshAccount(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
-	account, err := s.claude.Refresh(request.Context(), request.PathValue("id"))
+	account, reopened, err := s.refreshAccountOp(request.Context(), request.PathValue("id"))
 	if err != nil {
-		if launchErr := launchAccountRelogin(s.binary, request.PathValue("id")); launchErr != nil {
-			writeError(response, launchErr, http.StatusInternalServerError)
-			return
-		}
+		writeError(response, err, statusOf(err))
+		return
+	}
+	if reopened {
 		writeJSON(response, http.StatusAccepted, map[string]any{"message": "Official Claude sign-in reopened on this Mac."})
 		return
 	}
@@ -709,32 +684,23 @@ func (s *Server) addWorkspace(response http.ResponseWriter, request *http.Reques
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	path, err := validateWorkspace(body.Path)
+	workspace, err := s.addWorkspaceOp(request.Context(), body.Label, body.Path)
 	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	workspace, err := s.store.UpsertWorkspace(request.Context(), model.Workspace{
-		Label: strings.TrimSpace(body.Label), Path: path, Selected: true,
-	})
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
+		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusCreated, map[string]any{"workspace": workspace, "message": "Workspace added."})
 }
 
 func (s *Server) removeWorkspace(response http.ResponseWriter, request *http.Request) {
-	if err := s.store.DeleteWorkspace(request.Context(), request.PathValue("id")); err != nil {
-		writeError(response, err, http.StatusNotFound)
+	if err := s.removeWorkspaceOp(request.Context(), request.PathValue("id")); err != nil {
+		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"message": "Workspace removed; project files were not changed."})
 }
 
 func (s *Server) createHandoff(response http.ResponseWriter, request *http.Request) {
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
 	var body struct {
 		SourceSessionID      string         `json:"sourceSessionId"`
 		DestinationProvider  model.Provider `json:"destinationProvider"`
@@ -744,37 +710,10 @@ func (s *Server) createHandoff(response http.ResponseWriter, request *http.Reque
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	session, err := s.store.GetSession(request.Context(), body.SourceSessionID)
+	handoff, destination, err := s.createHandoffOp(request.Context(), body.SourceSessionID, body.DestinationProvider, body.DestinationAccountID)
 	if err != nil {
-		writeError(response, errors.New("source session not found"), http.StatusNotFound)
+		writeError(response, err, statusOf(err))
 		return
-	}
-	if body.DestinationProvider != model.ProviderClaude && body.DestinationProvider != model.ProviderCodex {
-		writeError(response, errors.New("destination provider must be claude or codex"), http.StatusBadRequest)
-		return
-	}
-	if body.DestinationProvider == model.ProviderClaude {
-		account, accountErr := s.store.GetAccount(request.Context(), body.DestinationAccountID)
-		if accountErr != nil || account.Status != model.AccountAuthenticated {
-			writeError(response, errors.New("destination Claude account is not authenticated"), http.StatusBadRequest)
-			return
-		}
-		if err := s.ensureRemoteSession(request.Context(), account, session.WorkspacePath); err != nil {
-			writeError(response, err, http.StatusConflict)
-			return
-		}
-	}
-	handoff, err := s.store.CreateHandoff(request.Context(), store.CreateHandoffParams{
-		SourceSessionID: session.ID, DestinationProvider: body.DestinationProvider,
-		DestinationAccountID: body.DestinationAccountID, WorkspacePath: session.WorkspacePath,
-	})
-	if err != nil {
-		writeError(response, err, http.StatusBadRequest)
-		return
-	}
-	destination := "Codex"
-	if body.DestinationProvider == model.ProviderClaude {
-		destination = "Claude"
 	}
 	writeJSON(response, http.StatusCreated, map[string]any{
 		"handoff":      handoff,
@@ -783,16 +722,9 @@ func (s *Server) createHandoff(response http.ResponseWriter, request *http.Reque
 }
 
 func (s *Server) installHooks(response http.ResponseWriter, request *http.Request) {
-	if err := install.InstallHooks(s.layout); err != nil {
-		writeError(response, err, http.StatusInternalServerError)
+	if err := s.installHooksOp(request.Context()); err != nil {
+		writeError(response, err, statusOf(err))
 		return
-	}
-	accounts, _ := s.store.ListAccounts(request.Context())
-	for _, account := range accounts {
-		if err := install.InstallClaudeHooks(account.ProfileDir, s.binary); err != nil {
-			writeError(response, err, http.StatusInternalServerError)
-			return
-		}
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"message": "Claude and Codex checkpoint hooks installed."})
 }
@@ -806,13 +738,9 @@ func (s *Server) updateSession(response http.ResponseWriter, request *http.Reque
 		writeError(response, err, http.StatusBadRequest)
 		return
 	}
-	session, err := s.store.UpdateSessionMetadata(request.Context(), request.PathValue("id"), body.Title, body.Pinned)
+	session, err := s.updateSessionOp(request.Context(), request.PathValue("id"), body.Title, body.Pinned)
 	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
-		}
-		writeError(response, err, status)
+		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"session": session, "message": "Checkpoint updated."})
@@ -955,23 +883,30 @@ func writeJSON(response http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(response).Encode(value)
 }
 
-func writeError(response http.ResponseWriter, err error, status int) {
-	message := strings.TrimSpace(err.Error())
+// errorMessage applies the dashboard's disclosure rules: a 5xx says nothing
+// specific, anything else has the home directory collapsed to ~, whitespace
+// folded, and is capped at 240 characters. Both the JSON API and the rendered
+// dashboard go through here so the two can never redact differently.
+func errorMessage(err error, status int) string {
 	if status >= http.StatusInternalServerError {
-		message = "Internal operation failed. Check the local Vibe Remote service log."
-	} else {
-		if home, homeErr := os.UserHomeDir(); homeErr == nil {
-			message = strings.ReplaceAll(message, home, "~")
-		}
-		message = strings.Join(strings.Fields(message), " ")
-		if len(message) > 240 {
-			message = message[:239] + "…"
-		}
+		return "Internal operation failed. Check the local Vibe Remote service log."
+	}
+	message := strings.TrimSpace(err.Error())
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		message = strings.ReplaceAll(message, home, "~")
+	}
+	message = strings.Join(strings.Fields(message), " ")
+	if len(message) > 240 {
+		message = message[:239] + "…"
 	}
 	if message == "" {
-		message = "Request failed."
+		return "Request failed."
 	}
-	writeJSON(response, status, map[string]string{"error": message})
+	return message
+}
+
+func writeError(response http.ResponseWriter, err error, status int) {
+	writeJSON(response, status, map[string]string{"error": errorMessage(err, status)})
 }
 
 func (s *Server) requireMutationHeader(next http.Handler) http.Handler {
