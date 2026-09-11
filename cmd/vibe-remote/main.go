@@ -29,8 +29,18 @@ const version = "0.1.0"
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "vibe-remote:", err)
+		var blocked *continuationHookError
+		if errors.As(err, &blocked) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
+}
+
+type continuationHookError struct{}
+
+func (*continuationHookError) Error() string {
+	return "Could not attach the continuation checkpoint. Retry before continuing."
 }
 
 func run(arguments []string) error {
@@ -209,8 +219,17 @@ func runHook(layout paths.Layout, arguments []string) error {
 		AccountID: os.Getenv("VIBE_REMOTE_ACCOUNT_ID"),
 		SlotID:    os.Getenv("VIBE_REMOTE_SLOT_ID"),
 	}
+	if provider == model.ProviderClaude && origin.SlotID != "" {
+		origin.Continuation, err = checkpoint.LoadContinuation(layout.Root, origin.SlotID)
+		if err != nil {
+			return &continuationHookError{}
+		}
+	}
 	response, err := service.HandleStdin(hookContext, provider, origin, os.Stdin)
 	if err != nil {
+		if origin.Continuation != "" {
+			return &continuationHookError{}
+		}
 		return err
 	}
 	if provider == model.ProviderCodex {
@@ -222,9 +241,18 @@ func runHook(layout paths.Layout, arguments []string) error {
 		_, err = os.Stdout.Write(append(response.Output, '\n'))
 		if err != nil {
 			_ = response.Release(hookContext)
+			if response.ContinuationDelivered {
+				return &continuationHookError{}
+			}
 			return err
 		}
-		return response.Finalize(hookContext)
+		if err := response.Finalize(hookContext); err != nil {
+			return err
+		}
+		if response.ContinuationDelivered {
+			return checkpoint.RemoveContinuation(layout.Root, origin.SlotID)
+		}
+		return nil
 	}
 	return nil
 }

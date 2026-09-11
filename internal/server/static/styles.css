@@ -120,6 +120,11 @@ button { touch-action: manipulation; }
   text-overflow: ellipsis;
 }
 
+.topbar-home {
+  color: inherit;
+  text-decoration: none;
+}
+
 .topbar-back,
 .topbar-refresh {
   display: grid;

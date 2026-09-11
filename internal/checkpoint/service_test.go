@@ -193,6 +193,40 @@ func TestSlotHookAdoptsTheConversationItIsTalkingIn(t *testing.T) {
 	}
 }
 
+func TestSlotAdoptsConversationAtSessionStart(t *testing.T) {
+	t.Parallel()
+
+	database := openCheckpointStore(t)
+	defer database.Close()
+	ctx := context.Background()
+	workspace := t.TempDir()
+	account, err := database.UpsertAccount(ctx, model.Account{Email: "person@example.com", Status: model.AccountAuthenticated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		Name: "Project", AccountID: account.ID, WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(database, staticGitCapturer{})
+	payload := `{"session_id":"conversation-at-start","hook_event_name":"SessionStart","source":"startup","cwd":` + quotedJSON(workspace) + `}`
+
+	response, err := service.HandleStdin(ctx, model.ProviderClaude,
+		HookOrigin{AccountID: account.ID, SlotID: slot.ID}, strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("handle session start: %v", err)
+	}
+	if !response.Ignored {
+		t.Fatal("session start was recorded as a checkpoint turn")
+	}
+	linked, err := database.GetRemoteSession(ctx, slot.ID)
+	if err != nil || linked.ResumeSessionID != "conversation-at-start" {
+		t.Fatalf("slot did not adopt conversation at session start: %#v, %v", linked, err)
+	}
+}
+
 // A hook that carries no slot is an agent this service did not start, such as a
 // Claude session the user ran by hand. It is still checkpointed, but it must not
 // claim any slot's conversation.

@@ -77,6 +77,8 @@ func decodeObject(payload []byte) (map[string]json.RawMessage, error) {
 
 func parseEventKind(name string) (store.HookEventKind, error) {
 	switch name {
+	case "SessionStart", "session_start", "session-start":
+		return store.HookEventSessionStart, nil
 	case "UserPromptSubmit", "user_prompt_submit", "user-prompt-submit":
 		return store.HookEventPrompt, nil
 	case "Stop", "stop":

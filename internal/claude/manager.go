@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/checkpoint"
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/model"
 )
 
@@ -525,6 +526,10 @@ func (m *Manager) Close(ctx context.Context) error {
 
 func (m *Manager) start(w *worker) (Process, error) {
 	resume := m.storedResume(w)
+	continuation, err := checkpoint.LoadContinuation(filepath.Dir(m.profilesRoot), w.id)
+	if err != nil {
+		return nil, errors.New("could not load continuation checkpoint")
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -537,6 +542,9 @@ func (m *Manager) start(w *worker) (Process, error) {
 		arguments = append(arguments, "--resume", resume)
 	}
 	arguments = append(arguments, "--remote-control", w.name)
+	if continuation != "" {
+		arguments = append(arguments, "--", checkpoint.ContinuationPrompt)
+	}
 	process, err := m.runner.Start(Command{
 		Args: arguments,
 		Dir:  w.workspace,

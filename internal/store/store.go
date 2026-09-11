@@ -24,11 +24,12 @@ var ErrNotFound = errors.New("not found")
 type HookEventKind string
 
 const (
-	HookEventPrompt    HookEventKind = "prompt"
-	HookEventStop      HookEventKind = "stop"
-	HookEventComplete  HookEventKind = "complete"
-	HookEventInterrupt HookEventKind = "interrupt"
-	HookEventFailure   HookEventKind = "failure"
+	HookEventSessionStart HookEventKind = "session_start"
+	HookEventPrompt       HookEventKind = "prompt"
+	HookEventStop         HookEventKind = "stop"
+	HookEventComplete     HookEventKind = "complete"
+	HookEventInterrupt    HookEventKind = "interrupt"
+	HookEventFailure      HookEventKind = "failure"
 )
 
 type HookEvent struct {

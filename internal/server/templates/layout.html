@@ -33,7 +33,9 @@
       <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
   {{end}}
-  <h1 class="topbar-title">{{if .Title}}{{.Title}}{{else}}Vibe Remote{{end}}</h1>
+  <h1 class="topbar-title">
+    <a class="topbar-home" href="{{screen "home" ""}}" hx-get="{{screen "home" ""}}" hx-target="#app" hx-push-url="true">{{if .Title}}{{.Title}}{{else}}Vibe Remote{{end}}</a>
+  </h1>
   <button class="topbar-refresh" type="button" data-refresh-now aria-label="Refresh">
     <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path d="M20 6v5h-5M4 18v-5h5M18.1 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.9 15" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9"/></svg>
   </button>

@@ -355,9 +355,7 @@ func (s *Server) createHandoffOp(ctx context.Context, sourceSessionID string, pr
 		if accountErr != nil || account.Status != model.AccountAuthenticated {
 			return model.Handoff{}, "", failText(http.StatusBadRequest, "destination Claude account is not authenticated")
 		}
-		if err := s.ensureRemoteSession(ctx, account, session.WorkspacePath); err != nil {
-			return model.Handoff{}, "", fail(http.StatusConflict, err)
-		}
+		return s.continueClaude(ctx, session, account)
 	}
 	handoff, err := s.store.CreateHandoff(ctx, store.CreateHandoffParams{
 		SourceSessionID: session.ID, DestinationProvider: provider,

@@ -717,7 +717,7 @@ func (s *Server) createHandoff(response http.ResponseWriter, request *http.Reque
 	}
 	writeJSON(response, http.StatusCreated, map[string]any{
 		"handoff":      handoff,
-		"instructions": "Handoff ready for 48 hours. Open " + destination + " in this workspace and type continue.",
+		"instructions": handoffInstructions(body.DestinationProvider, destination),
 	})
 }
 

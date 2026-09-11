@@ -40,13 +40,14 @@ type Service struct {
 }
 
 type HookResponse struct {
-	Session    model.Session
-	Turn       model.Turn
-	Output     []byte
-	Consumed   *model.Handoff
-	Ignored    bool
-	repository Repository
-	claim      *store.HandoffClaim
+	ContinuationDelivered bool
+	Session               model.Session
+	Turn                  model.Turn
+	Output                []byte
+	Consumed              *model.Handoff
+	Ignored               bool
+	repository            Repository
+	claim                 *store.HandoffClaim
 }
 
 func (r *HookResponse) Finalize(ctx context.Context) error {
@@ -91,8 +92,9 @@ func NewService(repository Repository, git GitCapturer) *Service {
 // attributes the checkpoint; the slot, present only for a worker this service
 // started, says which Remote Control session the conversation belongs to.
 type HookOrigin struct {
-	AccountID string
-	SlotID    string
+	AccountID    string
+	SlotID       string
+	Continuation string
 }
 
 func (s *Service) HandleStdin(
@@ -120,6 +122,20 @@ func (s *Service) HandleStdin(
 		if err := s.repository.LinkRemoteSessionConversation(ctx, origin.SlotID, event.NativeSessionID); err != nil {
 			return HookResponse{}, err
 		}
+	}
+	if event.Kind == store.HookEventSessionStart {
+		return HookResponse{Ignored: true}, nil
+	}
+	if provider == model.ProviderClaude && origin.SlotID != "" && origin.Continuation != "" && event.Kind == store.HookEventPrompt && event.Prompt == ContinuationPrompt {
+		response, err := s.record(ctx, event)
+		if err != nil {
+			return HookResponse{}, err
+		}
+		response.Output, err = json.Marshal(promptHookOutput{HookSpecificOutput: promptHookSpecificOutput{
+			HookEventName: "UserPromptSubmit", AdditionalContext: origin.Continuation,
+		}})
+		response.ContinuationDelivered = err == nil
+		return response, err
 	}
 	return s.recordAndMaybeContinue(ctx, event)
 }

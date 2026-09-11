@@ -543,7 +543,7 @@ func (s *Server) uiCreateHandoff(response http.ResponseWriter, request *http.Req
 	}
 	_ = handoff
 	s.renderConversation(response, request, http.StatusOK, id, NoticeView{
-		Message: "Ready for 48 hours. Open " + destination + " in this workspace and type continue.",
+		Message: handoffInstructions(handoff.DestinationProvider, destination),
 		Tone:    ToneGood,
 	})
 }

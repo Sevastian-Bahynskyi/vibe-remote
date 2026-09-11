@@ -127,7 +127,7 @@ func InstallClaudeHooks(profileDir, binary string) error {
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-	for _, event := range []string{"UserPromptSubmit", "Stop", "StopFailure"} {
+	for _, event := range []string{"SessionStart", "UserPromptSubmit", "Stop", "StopFailure"} {
 		updated, err := appendHookGroup(hooks[event], hookCommand(binary, "claude", event), event == "UserPromptSubmit")
 		if err != nil {
 			return fmt.Errorf("repair Claude %s hook: %w", event, err)

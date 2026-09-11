@@ -78,3 +78,20 @@ func TestParseClaudeStopFailure(t *testing.T) {
 		t.Fatalf("kind = %q, want failure", event.Kind)
 	}
 }
+
+func TestParseClaudeSessionStart(t *testing.T) {
+	t.Parallel()
+
+	event, err := ParseHookEvent(model.ProviderClaude, []byte(`{
+		"session_id":"claude-session",
+		"hook_event_name":"SessionStart",
+		"source":"startup",
+		"cwd":"/workspace"
+	}`))
+	if err != nil {
+		t.Fatalf("parse Claude session start: %v", err)
+	}
+	if event.Kind != store.HookEventSessionStart || event.NativeSessionID != "claude-session" {
+		t.Fatalf("unexpected Claude session start: %#v", event)
+	}
+}
