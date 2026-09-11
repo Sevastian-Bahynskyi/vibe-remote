@@ -127,6 +127,14 @@
     {{if .StartedAgo}}<div><dt>Running since</dt><dd>{{.StartedAgo}}</dd></div>{{end}}
   </dl>
   {{if .TailscaleURL}}<p class="mono url-line">{{.TailscaleURL}}</p>{{end}}
+  <form class="inline-edit" hx-post="ui/retention" hx-target="#system-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <label class="field-label" for="retention-days">Delete old checkpoints after (days)</label>
+    <div class="field-row">
+      <input id="retention-days" name="days" type="number" inputmode="numeric" min="1" max="3650" value="{{.RetentionDays}}" required aria-describedby="retention-help">
+      <button class="btn" type="submit">Save</button>
+    </div>
+    <p class="row-meta" id="retention-help" style="white-space: normal">Default: 7 days. Saving cleans up immediately. Kept checkpoints and working sessions are protected. Project files and native Claude history are not deleted.</p>
+  </form>
   <div class="detail-actions">
     <form hx-post="ui/install-hooks" hx-target="#system-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
       <button class="btn btn-wide" type="submit">Reinstall checkpoint hooks<span class="spinner htmx-indicator" aria-hidden="true"></span></button>

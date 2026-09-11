@@ -246,7 +246,10 @@ main {
   color: inherit;
   text-decoration: none;
 }
-.row-link { justify-content: space-between; }
+.row-link { flex-direction: row; justify-content: space-between; min-width: 0; text-align: left; }
+.row-link > svg { flex-shrink: 0; }
+#conversation-list .row-name { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+#conversation-detail h2 { overflow-wrap: anywhere; font-size: 1.25rem; }
 
 .card-text, .row-text {
   display: flex;

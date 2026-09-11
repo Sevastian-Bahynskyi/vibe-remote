@@ -10,7 +10,7 @@ Vibe Remote is a small macOS service for choosing which Claude subscription is a
 - Exposes a mobile dashboard only through Tailscale Serve at `/vibe-remote/`; the app itself listens only on `127.0.0.1:47173`.
 - Captures provider-neutral session checkpoints from official Claude and Codex hooks without an LLM call.
 - Continues a checkpoint on another Claude account in one click: creates a session with the source slot's name and workspace, attaches the latest eight captured turns plus live Git state, and starts continuation automatically. Codex destinations retain the 48-hour handoff and manual `continue` trigger.
-- Keeps closed checkpoints for 30 days. Pinned checkpoints are retained until unpinned.
+- Keeps closed checkpoints for 7 days by default. Change the period under System (1–3650 days); saving applies cleanup immediately without restarting. The setting survives daemon restarts. Pinned checkpoints are retained until unpinned, and working sessions are protected. Cleanup removes Vibe Remote checkpoints, not project files or native Claude history.
 - Blocks idle sleep on AC power only while slots are actually serving Remote Control, and tracks the battery cost of doing so. Closing the lid can still make it unavailable, by design.
 
 ## Account isolation and credentials

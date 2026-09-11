@@ -125,6 +125,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("POST /ui/conversations/{id}", server.uiUpdateConversation)
 	mux.HandleFunc("POST /ui/handoffs", server.uiCreateHandoff)
 	mux.HandleFunc("POST /ui/install-hooks", server.uiInstallHooks)
+	mux.HandleFunc("POST /ui/retention", server.uiRetention)
 	server.http = &http.Server{
 		Addr:              paths.ListenAddr,
 		Handler:           server.securityHeaders(server.requireMutationHeader(mux)),

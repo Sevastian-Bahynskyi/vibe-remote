@@ -146,6 +146,7 @@ type HealthItemView struct {
 }
 
 type SystemView struct {
+	RetentionDays  int
 	Items          []HealthItemView
 	TailscaleURL   string
 	StartedAgo     string
@@ -643,6 +644,7 @@ func buildSystem(state dashboardState, now time.Time) SystemView {
 	add("Claude Desktop", health.ClaudeDesktop, "Installed", "Not found")
 
 	return SystemView{
+		RetentionDays:  state.RetentionDays,
 		Items:          items,
 		TailscaleURL:   health.TailscaleURL,
 		StartedAgo:     humanSince(state.StartedAt, now),

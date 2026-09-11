@@ -712,9 +712,15 @@ func (s *Server) conversationDetail(ctx context.Context, id string, local bool) 
 	}
 	sessions := []model.Session{session}
 	decorateSessions(sessions, accounts)
+	eligible := make([]model.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if session.Provider != model.ProviderClaude || account.ID != session.AccountID {
+			eligible = append(eligible, account)
+		}
+	}
 	return ConversationDetailView{
 		Conversation: buildConversation(sessions[0], time.Now()),
-		Destinations: buildHandoffDestinations(accounts),
+		Destinations: buildHandoffDestinations(eligible),
 	}, nil
 }
 

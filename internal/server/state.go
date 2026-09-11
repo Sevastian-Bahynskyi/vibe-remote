@@ -9,10 +9,6 @@ import (
 	systemstate "github.com/Sevastian-Bahynskyi/vibe-remote/internal/system"
 )
 
-// checkpointRetention matches the README's promise: closed, unpinned checkpoints
-// are kept for 30 days.
-const checkpointRetention = 30 * 24 * time.Hour
-
 // maintenanceInterval is how often the retention sweep runs. It used to ride on
 // the dashboard's poll of /api/state, which meant retention silently depended on
 // somebody having the page open.
@@ -22,10 +18,11 @@ const maintenanceInterval = 6 * time.Hour
 // decorated. The JSON encoder and the HTML view builders both consume it, so the
 // two surfaces cannot disagree about what is running.
 type dashboardState struct {
-	Accounts   []model.Account
-	Workspaces []model.Workspace
-	Sessions   []model.Session
-	Remotes    []model.RemoteSession
+	RetentionDays int
+	Accounts      []model.Account
+	Workspaces    []model.Workspace
+	Sessions      []model.Session
+	Remotes       []model.RemoteSession
 	// ConversationTitles maps a slot's native Claude conversation ID to the
 	// checkpoint title for it, for the slots that resume one.
 	ConversationTitles map[string]string
@@ -81,6 +78,7 @@ func (s *Server) snapshot(ctx context.Context, local bool) (dashboardState, erro
 		state.PowerWarning = "This Mac is on battery and may become unreachable."
 	}
 	state.OnThisMac = local
+	state.RetentionDays, _ = s.retentionDays()
 	return state, nil
 }
 
@@ -139,5 +137,9 @@ func (s *Server) StartMaintenance(ctx context.Context) {
 }
 
 func (s *Server) sweepClosedSessions(ctx context.Context) {
-	_, _ = s.store.CleanupClosedSessions(ctx, time.Now().Add(-checkpointRetention))
+	days, err := s.retentionDays()
+	if err != nil {
+		return
+	}
+	_, _ = s.store.CleanupClosedSessions(ctx, time.Now().Add(-time.Duration(days)*24*time.Hour))
 }
