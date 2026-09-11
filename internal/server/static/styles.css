@@ -443,7 +443,7 @@ main {
 .field-row input { flex: 1; }
 .field-row .btn { width: auto; flex: 0 0 auto; }
 
-input[type="text"], input[type="email"], select {
+input[type="text"], input[type="email"], input[type="number"], select {
   width: 100%;
   min-height: var(--tap);
   padding: 0.6rem 0.7rem;
@@ -542,6 +542,10 @@ input[type="text"], input[type="email"], select {
 }
 
 /* ---- laptop ----------------------------------------------------------- */
+
+@media (pointer: coarse) {
+  html, body { touch-action: pan-x pan-y; }
+}
 
 @media (min-width: 52rem) {
   .card { flex-direction: row; align-items: center; }

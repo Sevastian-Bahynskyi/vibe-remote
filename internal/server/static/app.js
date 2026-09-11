@@ -14,6 +14,12 @@
   var THEME_KEY = 'vibe-remote-theme';
   var DEFAULT_REFRESH_MS = 20000;
 
+  ['gesturestart', 'gesturechange'].forEach(function (type) {
+    document.addEventListener(type, function (event) {
+      if (window.matchMedia('(pointer: coarse)').matches) event.preventDefault();
+    }, { passive: false });
+  });
+
   // ---- periodic refresh -------------------------------------------------
   //
   // htmx's own `every 20s` trigger would do this, but pausing it on a hidden
