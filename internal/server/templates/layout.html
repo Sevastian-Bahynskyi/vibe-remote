@@ -8,9 +8,10 @@
     <!-- responseHandling must list every arm: naming it replaces htmx's whole
          default array. The 4xx arm is what lets a 409 "Claude is still working"
          render its inline confirm row instead of being dropped. The timeout sits
-         just under the server's 120s write timeout so a slow start fails
-         cleanly rather than as a truncated connection. -->
-    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"selfRequestsOnly":true,"timeout":115000,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+         just under the server's 45s write timeout so a slow request fails
+         cleanly rather than as a truncated connection; starting a session no
+         longer waits on Claude registering, so nothing legitimately runs long. -->
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"selfRequestsOnly":true,"timeout":40000,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
     <title>{{if .Title}}{{.Title}} · {{end}}Vibe Remote</title>
     <link rel="stylesheet" href="static/styles.css">
     <script src="static/theme.js"></script>
@@ -26,8 +27,21 @@
 </html>
 {{end}}
 
+{{/*
+  The topbar is rendered twice from one body: inline for a cold page load, and
+  out of band for an htmx screen swap. A swap replaces #app only, and the topbar
+  is outside it, so without the out-of-band copy the title and the back arrow
+  would keep describing the screen the user just left.
+*/}}
 {{define "topbar"}}
-<header class="topbar">
+<header id="topbar" class="topbar">{{template "topbar-inner" .}}</header>
+{{end}}
+
+{{define "topbar-oob"}}
+<header id="topbar" class="topbar" hx-swap-oob="true">{{template "topbar-inner" .}}</header>
+{{end}}
+
+{{define "topbar-inner"}}
   {{if .Back}}
     <a class="topbar-back" href="{{.Back}}" hx-get="{{.Back}}" hx-target="#app" hx-push-url="true" aria-label="Back">
       <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -39,5 +53,4 @@
   <button class="topbar-refresh" type="button" data-refresh-now aria-label="Refresh">
     <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path d="M20 6v5h-5M4 18v-5h5M18.1 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.9 15" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9"/></svg>
   </button>
-</header>
 {{end}}

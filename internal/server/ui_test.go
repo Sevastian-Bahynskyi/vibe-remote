@@ -143,7 +143,19 @@ func TestScreenRendersIdenticallyAsFragmentAndPage(t *testing.T) {
 		if strings.Contains(fragment, "<!doctype html>") {
 			t.Errorf("GET %s returned a whole document to an htmx request", target)
 		}
-		if !strings.Contains(page, strings.TrimSpace(fragment)) {
+		// An htmx screen response is the screen followed by the topbar as an
+		// out-of-band swap. The page renders that same topbar inline instead, so
+		// the two halves are checked separately: the screen markup must be
+		// byte-identical to the page's, and the topbar must be there to swap.
+		screen, topbar, split := strings.Cut(fragment, `<header id="topbar"`)
+		if !split {
+			t.Errorf("GET %s: htmx response carries no out-of-band topbar, so the title and back arrow would go stale", target)
+			continue
+		}
+		if !strings.Contains(topbar, `hx-swap-oob="true"`) {
+			t.Errorf("GET %s: the topbar is present but not marked for an out-of-band swap", target)
+		}
+		if !strings.Contains(page, strings.TrimSpace(screen)) {
 			t.Errorf("GET %s: the page and the fragment render different markup", target)
 		}
 	}
@@ -308,4 +320,62 @@ func seedSession(t *testing.T, database *store.Store) model.RemoteSession {
 		t.Fatal(err)
 	}
 	return remote
+}
+
+// Deleting a session used to answer with an HX-Location header. htmx handles
+// that by re-fetching the screen and, with no target given, swapping it into
+// <body> — which replaced the topbar, the notice host and #app itself with a
+// bare screen fragment. The result was a headerless page with no targets left
+// for any later swap, and the confirmation notice was dropped too, because htmx
+// returns from that header before it reads the body.
+func TestDeletingASessionLandsOnAWholeHomeScreen(t *testing.T) {
+	t.Parallel()
+	service, database := newTestServerWithStore(t, inertRunner{})
+	seedRunnableSlot(t, service, database, "rs_doomed", "dddddddd-1111-4111-8111-111111111111")
+
+	request := httptest.NewRequest(http.MethodPost, "/ui/sessions/rs_doomed/delete",
+		strings.NewReader("confirmed=1"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("X-Vibe-Remote", "1")
+	request.Header.Set("HX-Request", "true")
+	response := httptest.NewRecorder()
+	service.http.Handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("HX-Location"); got != "" {
+		t.Errorf("HX-Location = %q; it swaps <body> and discards this body", got)
+	}
+	if got := response.Header().Get("HX-Retarget"); got != "#app" {
+		t.Errorf("HX-Retarget = %q, want #app so the page chrome survives", got)
+	}
+	if got := response.Header().Get("HX-Reswap"); got != "innerHTML" {
+		t.Errorf("HX-Reswap = %q, want innerHTML", got)
+	}
+	if got := response.Header().Get("HX-Push-Url"); got != screenURL("home", "") {
+		t.Errorf("HX-Push-Url = %q, want the home screen", got)
+	}
+
+	body := response.Body.String()
+	// The home screen itself...
+	if !strings.Contains(body, "Start a session") {
+		t.Errorf("body does not render the home screen: %s", body)
+	}
+	// ...a fresh topbar, since the old one still said the deleted session's
+	// name and carried a back arrow to a screen that no longer exists...
+	if !strings.Contains(body, `<header id="topbar"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("body does not refresh the topbar out of band: %s", body)
+	}
+	if strings.Contains(body, "topbar-back") {
+		t.Errorf("home topbar still carries a back arrow: %s", body)
+	}
+	// ...and the confirmation the user acted on something.
+	if !strings.Contains(body, "deleted.") {
+		t.Errorf("body carries no deletion notice: %s", body)
+	}
+
+	if _, err := database.GetRemoteSession(context.Background(), "rs_doomed"); err == nil {
+		t.Error("session still exists after delete")
+	}
 }

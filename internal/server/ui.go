@@ -109,7 +109,14 @@ func (s *Server) uiHome(response http.ResponseWriter, request *http.Request) {
 			pageData{Screen: "home", Notice: noticeFor(err)})
 		return
 	}
-	s.renderScreen(response, request, http.StatusOK, "home", pageData{
+	s.renderScreen(response, request, http.StatusOK, "home", homePageData(state))
+}
+
+// homePageData is the home screen's view data. It is shared rather than inlined
+// because deleting a session also lands on home, and a second copy would be a
+// second thing to keep in step.
+func homePageData(state dashboardState) pageData {
+	return pageData{
 		Screen:   "home",
 		Sessions: buildSessionList(state),
 		Alerts:   buildAlerts(state),
@@ -118,7 +125,7 @@ func (s *Server) uiHome(response http.ResponseWriter, request *http.Request) {
 			Workspaces:    len(state.Workspaces),
 			Conversations: len(state.Sessions),
 		},
-	})
+	}
 }
 
 func (s *Server) uiSessionNew(response http.ResponseWriter, request *http.Request) {
@@ -457,10 +464,29 @@ func (s *Server) uiDeleteSession(response http.ResponseWriter, request *http.Req
 		s.renderSessionOutcome(response, request, statusOf(err), id, noticeFor(err), nil)
 		return
 	}
-	// The session is gone, so its screen is gone with it.
-	response.Header().Set("HX-Location", screenURL("home", ""))
-	s.renderFragment(response, http.StatusOK, "notice-oob",
-		NoticeView{Message: remote.Name + " deleted.", Tone: ToneGood})
+	// The session is gone, so its screen is gone with it: this response replaces
+	// the whole of #app with home.
+	//
+	// It is rendered here rather than handed to htmx as an HX-Location. That
+	// header makes htmx fetch the screen again and, given no target, swap it into
+	// <body> — which replaces the topbar, the notice host and #app itself with a
+	// bare screen fragment, leaving a headerless page and no targets for any
+	// later swap. It also returns before reading this body, so the confirmation
+	// notice was dropped on the way.
+	state, err := s.snapshot(request.Context(), isLocalRequest(request))
+	if err != nil {
+		s.renderFragment(response, http.StatusInternalServerError, "notice-oob", noticeFor(err))
+		return
+	}
+	data := homePageData(state)
+	response.Header().Set("HX-Retarget", "#app")
+	response.Header().Set("HX-Reswap", "innerHTML")
+	response.Header().Set("HX-Push-Url", screenURL("home", ""))
+	s.renderParts(response, http.StatusOK,
+		part{"home", data},
+		part{"topbar-oob", data},
+		part{"notice-oob", NoticeView{Message: remote.Name + " deleted.", Tone: ToneGood}},
+	)
 }
 
 // ---- account, workspace, conversation and system actions ----

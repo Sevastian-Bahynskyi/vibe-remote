@@ -23,6 +23,7 @@ var screens = []string{
 	"accounts",
 	"workspaces",
 	"conversations",
+	"chat",
 	"conversation",
 	"system",
 	"guide",
@@ -113,7 +114,13 @@ func (s *Server) render(response http.ResponseWriter, status int, set *template.
 // whole document. Both execute the same screen template.
 func (s *Server) renderScreen(response http.ResponseWriter, request *http.Request, status int, screen string, data pageData) {
 	if isHTMXRequest(request) {
-		s.render(response, status, s.views.base, screen, data)
+		// The topbar sits outside #app, and #app is the only region a screen swap
+		// replaces, so the topbar has to come back out of band. Without it the
+		// title and the back arrow keep describing the screen the user just left.
+		s.renderParts(response, status,
+			part{screen, data},
+			part{"topbar-oob", data},
+		)
 		return
 	}
 	set, ok := s.views.pages[screen]
