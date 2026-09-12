@@ -56,13 +56,18 @@
 </section>
 {{end}}
 
-{{define "conversation-list"}}
-<section id="conversation-list" class="cards">
+{{/*
+  Conversations are shown as chats first, checkpoints second. Both levels use
+  .row-tight rather than the taller .row: these lists are long, and the point of
+  grouping was to fit more of them on a phone screen at once.
+*/}}
+{{define "chat-list"}}
+<section id="chat-list" class="cards">
   {{range .}}
-  <a class="row row-link" href="{{screen "conversation" .ID}}" hx-get="{{screen "conversation" .ID}}" hx-target="#app" hx-push-url="true">
+  <a class="row row-link row-tight" href="{{screen "chat" .ID}}" hx-get="{{screen "chat" .ID}}" hx-target="#app" hx-push-url="true">
     <div class="row-text">
-      <span class="row-name">{{if .Pinned}}<span class="pin" aria-label="Pinned">★</span> {{end}}{{.Title}}</span>
-      <span class="row-meta">{{.Provider}} · {{.State}}{{if .Ago}} · {{.Ago}}{{end}}</span>
+      <span class="row-name">{{.Name}}</span>
+      <span class="row-meta">{{.Count}}{{if .Ago}} · {{.Ago}}{{end}}{{if .Meta}} · {{.Meta}}{{end}}</span>
     </div>
     <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </a>
@@ -71,11 +76,36 @@
 </section>
 {{end}}
 
+{{define "chat-detail"}}
+<section id="chat-detail">
+  {{with .Group}}
+  <p class="group-summary">{{.Count}}{{if .Meta}} · {{.Meta}}{{end}}</p>
+  {{template "conversation-list" .Conversations}}
+  {{end}}
+</section>
+{{end}}
+
+{{define "conversation-list"}}
+<section id="conversation-list" class="cards">
+  {{range .}}
+  <a class="row row-link row-tight" href="{{screen "conversation" .ID}}" hx-get="{{screen "conversation" .ID}}" hx-target="#app" hx-push-url="true">
+    <div class="row-text">
+      <span class="row-name">{{if .Pinned}}<span class="pin" aria-label="Pinned">★</span> {{end}}{{.Title}}</span>
+      <span class="row-meta">{{.State}}{{if .Ago}} · {{.Ago}}{{end}}{{if .ChatName}} · {{.ChatName}}{{end}}</span>
+    </div>
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  {{end}}
+  {{if not .}}<p class="empty">No checkpoints in this chat yet.</p>{{end}}
+</section>
+{{end}}
+
 {{define "conversation-detail"}}
 <section id="conversation-detail" class="detail">
   {{with .Conversation}}
   <h2>{{.Title}}</h2>
   <dl class="facts">
+    {{if .ChatName}}<div><dt>Chat</dt><dd>{{.ChatName}}</dd></div>{{end}}
     <div><dt>Agent</dt><dd>{{.Provider}}</dd></div>
     <div><dt>State</dt><dd data-tone="{{.Tone}}">{{.State}}</dd></div>
     <div><dt>Folder</dt><dd class="mono">{{.WorkspacePath}}</dd></div>

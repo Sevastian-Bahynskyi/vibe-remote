@@ -20,16 +20,17 @@ type pageData struct {
 	Back   string
 	Notice NoticeView
 
-	Alerts        []AlertView
-	Sessions      SessionListView
-	Session       SessionDetailView
-	Form          SessionFormView
-	Accounts      []AccountView
-	Workspaces    []WorkspaceView
-	Conversations []ConversationView
-	Conversation  ConversationDetailView
-	System        SystemView
-	Counts        CountsView
+	Alerts       []AlertView
+	Sessions     SessionListView
+	Session      SessionDetailView
+	Form         SessionFormView
+	Accounts     []AccountView
+	Workspaces   []WorkspaceView
+	Chats        []ChatGroupView
+	Chat         ChatGroupDetailView
+	Conversation ConversationDetailView
+	System       SystemView
+	Counts       CountsView
 }
 
 // formLimit mirrors decodeJSON's cap. ParseForm has no size limit of its own for
@@ -87,6 +88,8 @@ func (s *Server) dashboard(response http.ResponseWriter, request *http.Request) 
 		s.uiWorkspaces(response, request)
 	case "conversations":
 		s.uiConversations(response, request)
+	case "chat":
+		s.uiChat(response, request, id)
 	case "conversation":
 		s.uiConversation(response, request, id)
 	case "system":
@@ -220,10 +223,35 @@ func (s *Server) uiConversations(response http.ResponseWriter, request *http.Req
 			pageData{Screen: "conversations", Title: "Conversations", Back: screenURL("home", ""), Notice: noticeFor(err)})
 		return
 	}
-	views := buildConversations(state, time.Now())
-	sortConversations(views)
 	s.renderScreen(response, request, http.StatusOK, "conversations", pageData{
-		Screen: "conversations", Title: "Conversations", Back: screenURL("home", ""), Conversations: views,
+		Screen: "conversations", Title: "Conversations", Back: screenURL("home", ""),
+		Chats: buildChatGroups(state, time.Now()),
+	})
+}
+
+// uiChat renders one chat and the checkpoints captured under it.
+func (s *Server) uiChat(response http.ResponseWriter, request *http.Request, id string) {
+	state, err := s.snapshot(request.Context(), isLocalRequest(request))
+	if err != nil {
+		s.renderScreen(response, request, http.StatusInternalServerError, "conversations",
+			pageData{Screen: "conversations", Title: "Conversations", Back: screenURL("home", ""), Notice: noticeFor(err)})
+		return
+	}
+	group, found := findChatGroup(state, time.Now(), id)
+	if !found {
+		// A chat whose slot was deleted while this screen was open. Its
+		// checkpoints are not lost, they have moved to the unattributed group, so
+		// the list is the honest place to land.
+		s.renderScreen(response, request, http.StatusNotFound, "conversations", pageData{
+			Screen: "conversations", Title: "Conversations", Back: screenURL("home", ""),
+			Chats:  buildChatGroups(state, time.Now()),
+			Notice: NoticeView{Message: "That chat no longer exists. Its checkpoints are listed under Earlier conversations.", Tone: ToneWarn},
+		})
+		return
+	}
+	s.renderScreen(response, request, http.StatusOK, "chat", pageData{
+		Screen: "chat", Title: group.Name, Back: screenURL("conversations", ""),
+		Chat: ChatGroupDetailView{Group: group},
 	})
 }
 
@@ -235,7 +263,7 @@ func (s *Server) uiConversation(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	s.renderScreen(response, request, http.StatusOK, "conversation", pageData{
-		Screen: "conversation", Title: detail.Conversation.Title, Back: screenURL("conversations", ""), Conversation: detail,
+		Screen: "conversation", Title: detail.Conversation.Title, Back: detail.Back, Conversation: detail,
 	})
 }
 
@@ -718,9 +746,20 @@ func (s *Server) conversationDetail(ctx context.Context, id string, local bool) 
 			eligible = append(eligible, account)
 		}
 	}
+	conversation := buildConversation(sessions[0], time.Now())
+	// The chat this checkpoint belongs to, so the screen names it and the back
+	// link returns to the group the user came from rather than the whole list.
+	back := screenURL("conversations", "")
+	if slot := strings.TrimSpace(session.SlotID); slot != "" {
+		if remote, slotErr := s.store.GetRemoteSession(ctx, slot); slotErr == nil {
+			conversation.ChatName = remote.Name
+			back = screenURL("chat", remote.ID)
+		}
+	}
 	return ConversationDetailView{
-		Conversation: buildConversation(sessions[0], time.Now()),
+		Conversation: conversation,
 		Destinations: buildHandoffDestinations(eligible),
+		Back:         back,
 	}, nil
 }
 

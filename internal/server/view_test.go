@@ -304,3 +304,95 @@ func TestTruncateIsRuneSafe(t *testing.T) {
 		t.Fatal("truncate must fold whitespace so a multi-line prompt stays on one row")
 	}
 }
+
+// ---- conversation grouping ----
+
+func TestBuildChatGroupsGroupsCheckpointsUnderTheirChat(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	state := dashboardState{
+		Remotes: []model.RemoteSession{
+			{ID: "rs_widget", Name: "Widget", WorkspacePath: "/Users/seva/code/couplegoai"},
+			{ID: "rs_mom", Name: "Mom fixes", WorkspacePath: "/Users/seva/code/couplegoai"},
+		},
+		Sessions: []model.Session{
+			// Newest overall, and it belongs to the second slot.
+			{ID: "s1", SlotID: "rs_mom", Title: "Fix the header", UpdatedAt: now.Add(-time.Minute)},
+			{ID: "s2", SlotID: "rs_widget", Title: "Widgets round two", UpdatedAt: now.Add(-time.Hour)},
+			{ID: "s3", SlotID: "rs_widget", Title: "Widgets round one", UpdatedAt: now.Add(-2 * time.Hour)},
+			// No slot at all, and a slot that no longer exists: both are history.
+			{ID: "s4", Title: "Something from before", UpdatedAt: now.Add(-48 * time.Hour)},
+			{ID: "s5", SlotID: "rs_deleted", Title: "Chat since deleted", UpdatedAt: now.Add(-72 * time.Hour)},
+		},
+	}
+
+	groups := buildChatGroups(state, now)
+	if len(groups) != 3 {
+		t.Fatalf("groups = %d, want one per live chat plus the leftovers: %#v", len(groups), groups)
+	}
+	if groups[0].Name != "Mom fixes" || groups[0].Count != "1 checkpoint" {
+		t.Errorf("first group = %q (%s), want the most recently used chat", groups[0].Name, groups[0].Count)
+	}
+	if groups[1].Name != "Widget" || groups[1].Count != "2 checkpoints" {
+		t.Errorf("second group = %q (%s), want Widget with both its checkpoints", groups[1].Name, groups[1].Count)
+	}
+	last := groups[2]
+	if last.ID != unattributedChatID || last.Live {
+		t.Errorf("last group = %#v, want the unattributed group last and not live", last)
+	}
+	if last.Count != "2 checkpoints" {
+		t.Errorf("unattributed count = %s, want the slotless and the deleted-slot checkpoints together", last.Count)
+	}
+	// A checkpoint inside a live chat carries the chat's name for the screens
+	// that show it out of context.
+	if groups[1].Conversations[0].ChatName != "Widget" {
+		t.Errorf("checkpoint chat name = %q, want Widget", groups[1].Conversations[0].ChatName)
+	}
+}
+
+func TestBuildChatGroupsPutsPinnedCheckpointsFirstWithinAChat(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	state := dashboardState{
+		Remotes: []model.RemoteSession{{ID: "rs_one", Name: "Only chat"}},
+		Sessions: []model.Session{
+			{ID: "s1", SlotID: "rs_one", Title: "Recent", UpdatedAt: now.Add(-time.Minute)},
+			{ID: "s2", SlotID: "rs_one", Title: "Kept", Pinned: true, UpdatedAt: now.Add(-time.Hour)},
+		},
+	}
+	groups := buildChatGroups(state, now)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %#v", groups)
+	}
+	if got := groups[0].Conversations[0].Title; got != "Kept" {
+		t.Errorf("first checkpoint = %q, want the pinned one", got)
+	}
+}
+
+func TestFindChatGroupResolvesAndRejects(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	state := dashboardState{
+		Remotes:  []model.RemoteSession{{ID: "rs_one", Name: "Only chat"}},
+		Sessions: []model.Session{{ID: "s1", SlotID: "rs_one", Title: "A turn", UpdatedAt: now}},
+	}
+	group, found := findChatGroup(state, now, "rs_one")
+	if !found || group.Name != "Only chat" {
+		t.Fatalf("findChatGroup(rs_one) = (%#v, %v)", group, found)
+	}
+	if _, found := findChatGroup(state, now, "rs_missing"); found {
+		t.Error("findChatGroup resolved a chat that has no checkpoints and no slot")
+	}
+}
+
+func TestRefreshCadenceSpeedsUpWhileSomethingIsInFlight(t *testing.T) {
+	t.Parallel()
+	settled := []SessionView{{Tone: ToneGood}, {Tone: ToneNeutral}}
+	if got := refreshCadence(settled); got != idleRefreshMS {
+		t.Errorf("settled cadence = %d, want the idle rate %d", got, idleRefreshMS)
+	}
+	starting := []SessionView{{Tone: ToneGood}, {Tone: ToneBusy}}
+	if got := refreshCadence(starting); got != transitionalRefreshM {
+		t.Errorf("starting cadence = %d, want the fast rate %d", got, transitionalRefreshM)
+	}
+}

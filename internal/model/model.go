@@ -48,10 +48,13 @@ const (
 )
 
 type Session struct {
-	ID              string       `json:"id"`
-	Provider        Provider     `json:"provider"`
-	NativeSessionID string       `json:"nativeSessionId"`
-	AccountID       string       `json:"accountId,omitempty"`
+	ID              string   `json:"id"`
+	Provider        Provider `json:"provider"`
+	NativeSessionID string   `json:"nativeSessionId"`
+	AccountID       string   `json:"accountId,omitempty"`
+	// SlotID is the session slot this conversation was captured under, empty for
+	// a conversation recorded before slots were tracked or started outside one.
+	SlotID          string       `json:"slotId,omitempty"`
 	Title           string       `json:"title"`
 	WorkspacePath   string       `json:"workspacePath"`
 	WorktreePath    string       `json:"worktreePath,omitempty"`

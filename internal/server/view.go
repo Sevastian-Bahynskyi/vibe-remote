@@ -65,6 +65,27 @@ type SessionListView struct {
 	// Blocker explains why a session cannot be started yet, and is empty when
 	// one can. It is the only place the sessions screen carries prose.
 	Blocker string
+	// RefreshEvery is how often, in milliseconds, the list re-polls itself.
+	// Starting a session no longer blocks its request until Claude registers, so
+	// the card is what reports progress, and the idle cadence is too slow to
+	// watch a start resolve. A list with anything in flight polls quickly and
+	// drops back to the idle rate once everything has settled.
+	RefreshEvery int
+}
+
+// refreshCadence reports the poll interval a list of session cards deserves.
+const (
+	idleRefreshMS        = 20000
+	transitionalRefreshM = 1500
+)
+
+func refreshCadence(sessions []SessionView) int {
+	for _, session := range sessions {
+		if session.Tone == ToneBusy {
+			return transitionalRefreshM
+		}
+	}
+	return idleRefreshMS
 }
 
 type AccountView struct {
@@ -100,7 +121,41 @@ type ConversationView struct {
 	ResumeCommand   string
 	DesktopGuidance string
 	IsClaude        bool
+	// ChatName is the session slot this checkpoint was captured under, for the
+	// screens that show a checkpoint outside its own group and would otherwise
+	// give no clue which chat it came from.
+	ChatName string
 }
+
+// ChatGroupView is one chat on the Conversations screen: a session slot and the
+// checkpoints captured under it. Grouping exists because a flat list of every
+// checkpoint ever captured is not navigable once there are eighty of them — the
+// question being asked is almost always "what happened in this chat", and the
+// chat is the name the user chose, so it is the name they look for.
+type ChatGroupView struct {
+	// ID addresses the group in a URL. It is the slot ID for a live chat and the
+	// unattributedChatID sentinel for the leftover group.
+	ID    string
+	Name  string
+	Meta  string
+	Count string
+	// Ago is the age of the most recent checkpoint in the group, which is what
+	// makes the list scannable by recency.
+	Ago string
+	// Live marks a group whose session slot still exists, so a group left behind
+	// by a deleted slot reads as history rather than as something to open.
+	Live          bool
+	Conversations []ConversationView
+}
+
+type ChatGroupDetailView struct {
+	Group ChatGroupView
+}
+
+// unattributedChatID groups the checkpoints with no slot: everything captured
+// before slots were recorded, plus anything run outside one. It is a reserved
+// group address, and the "@" keeps it from colliding with a real slot ID.
+const unattributedChatID = "@earlier"
 
 // ChoiceView is one option in a radio list. The dashboard uses radio lists
 // rather than <select> because a phone shows every option at once and takes one
@@ -199,6 +254,9 @@ type ConversationDetailView struct {
 	Conversation ConversationView
 	Destinations []HandoffDestinationView
 	Confirm      *ConfirmView
+	// Back is the screen this checkpoint was opened from: its own chat when it
+	// has one, and the chat list otherwise.
+	Back string
 }
 
 // CountsView feeds the navigation rows on the home screen. The counts are the
@@ -334,9 +392,10 @@ func buildSessionList(state dashboardState) SessionListView {
 		sessions = append(sessions, buildSessionWith(state, remote, accounts, workspaces))
 	}
 	view := SessionListView{
-		Sessions: sessions,
-		Running:  state.Running,
-		Total:    len(sessions),
+		Sessions:     sessions,
+		Running:      state.Running,
+		Total:        len(sessions),
+		RefreshEvery: refreshCadence(sessions),
 	}
 	view.CanSubmitReason(state)
 	return view
@@ -473,12 +532,81 @@ func buildConversation(session model.Session, now time.Time) ConversationView {
 	}
 }
 
-func buildConversations(state dashboardState, now time.Time) []ConversationView {
-	views := make([]ConversationView, 0, len(state.Sessions))
-	for _, session := range state.Sessions {
-		views = append(views, buildConversation(session, now))
+// buildChatGroups folds the checkpoint list into one group per chat, ordered by
+// the most recent checkpoint in each so the chat the user just worked in is at
+// the top. Groups whose slot still exists come first; the unattributed group is
+// always last, because it is where history accumulates rather than somewhere
+// work is happening.
+func buildChatGroups(state dashboardState, now time.Time) []ChatGroupView {
+	slots := make(map[string]model.RemoteSession, len(state.Remotes))
+	for _, remote := range state.Remotes {
+		slots[remote.ID] = remote
 	}
-	return views
+
+	order := make([]string, 0, len(slots)+1)
+	grouped := make(map[string][]ConversationView, len(slots)+1)
+	latest := make(map[string]time.Time, len(slots)+1)
+
+	for _, session := range state.Sessions {
+		key := strings.TrimSpace(session.SlotID)
+		// No slot, or a slot deleted since: either way there is no chat name left
+		// to file this checkpoint under.
+		if _, live := slots[key]; !live {
+			key = unattributedChatID
+		}
+		if _, seen := grouped[key]; !seen {
+			order = append(order, key)
+		}
+		conversation := buildConversation(session, now)
+		if remote, live := slots[key]; live {
+			conversation.ChatName = remote.Name
+		}
+		grouped[key] = append(grouped[key], conversation)
+		if session.UpdatedAt.After(latest[key]) {
+			latest[key] = session.UpdatedAt
+		}
+	}
+
+	groups := make([]ChatGroupView, 0, len(order))
+	for _, key := range order {
+		conversations := grouped[key]
+		sortConversations(conversations)
+		group := ChatGroupView{
+			ID:            key,
+			Count:         plural(len(conversations), "checkpoint"),
+			Ago:           humanSince(latest[key], now),
+			Conversations: conversations,
+		}
+		if remote, ok := slots[key]; ok {
+			group.Live = true
+			group.Name = orDefault(remote.Name, "Unnamed session")
+			group.Meta = filepath.Base(remote.WorkspacePath)
+		} else {
+			group.Name = "Earlier conversations"
+			group.Meta = "Not captured under a session"
+		}
+		groups = append(groups, group)
+	}
+
+	sort.SliceStable(groups, func(first, second int) bool {
+		if groups[first].Live != groups[second].Live {
+			return groups[first].Live
+		}
+		return latest[groups[first].ID].After(latest[groups[second].ID])
+	})
+	return groups
+}
+
+// findChatGroup resolves one group for its own screen. It rebuilds the whole
+// grouping rather than querying for the group directly, so the detail screen
+// can never disagree with the list about what a group contains.
+func findChatGroup(state dashboardState, now time.Time, id string) (ChatGroupView, bool) {
+	for _, group := range buildChatGroups(state, now) {
+		if group.ID == id {
+			return group, true
+		}
+	}
+	return ChatGroupView{}, false
 }
 
 // ---- the session form ----

@@ -10,7 +10,7 @@
 */}}
 
 {{define "session-list"}}
-<section id="session-list" class="cards" data-refresh="ui/fragments/sessions">
+<section id="session-list" class="cards" data-refresh="ui/fragments/sessions" data-refresh-every="{{.RefreshEvery}}">
   {{range .Sessions}}{{template "session-card" .}}{{end}}
   {{if not .Sessions}}<p class="empty">No sessions yet.</p>{{end}}
 </section>

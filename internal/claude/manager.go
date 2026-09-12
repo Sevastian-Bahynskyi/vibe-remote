@@ -45,7 +45,10 @@ type Options struct {
 	MaxBackoff      time.Duration
 	StableRunWindow time.Duration
 	ReadyTimeout    time.Duration
-	Now             func() time.Time
+	// ReadyPoll is how often the profile's bridge record is re-read while a slot
+	// is registering. See waitReady for why registration is detected there.
+	ReadyPoll time.Duration
+	Now       func() time.Time
 }
 
 type Manager struct {
@@ -59,6 +62,7 @@ type Manager struct {
 	maxDelay     time.Duration
 	stableWindow time.Duration
 	readyTimeout time.Duration
+	readyPoll    time.Duration
 	now          func() time.Time
 
 	opMu    sync.Mutex
@@ -89,6 +93,26 @@ type worker struct {
 	done      chan struct{}
 	startedAt time.Time
 	state     model.WorkerStatus
+}
+
+// live reports whether this worker is serving Remote Control or is on its way
+// there under its own steam. Registration is no longer waited for inside
+// Activate, so "not running yet" no longer means "not coming up": a slot that is
+// still registering must read as live, or a second Activate with the same spec
+// would tear down the start already in progress and begin again — which, during
+// the restore sweep at startup, is every slot restarting itself.
+//
+// Callers hold m.mu.
+func (w *worker) live() bool {
+	if w.state.Running {
+		return true
+	}
+	switch w.state.State {
+	case "starting", "connecting", "restarting":
+		return true
+	default:
+		return false
+	}
 }
 
 func New(appDataRoot string, store Store, options Options) (*Manager, error) {
@@ -126,6 +150,7 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 		// starting MCP servers before Claude registers Remote Control; measured
 		// at ~29s on a first-run profile, so keep well clear of that.
 		readyTimeout: valueOr(options.ReadyTimeout, 90*time.Second),
+		readyPoll:    valueOr(options.ReadyPoll, 250*time.Millisecond),
 		now:          options.Now,
 		workers:      make(map[string]*worker),
 	}
@@ -343,7 +368,7 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 	// Restarting on that drift would cut the very session it is tracking. A
 	// caller that means to change conversations stops the slot first.
 	unchanged := current != nil && current.account.ID == account.ID && current.workspace == workspace &&
-		current.name == name && current.state.Running
+		current.name == name && current.live()
 	m.mu.RUnlock()
 	if unchanged && !spec.Force {
 		return nil
@@ -378,12 +403,36 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 		return fmt.Errorf("start Claude Remote Control: %w", err)
 	}
 	go m.supervise(w, process)
-	if err := m.waitReady(w, process); err != nil {
-		_ = m.stopLocked(context.Background(), spec.ID, true)
-		return fmt.Errorf("Claude Remote Control did not become ready: %w", err)
-	}
-	m.markRunning(w, process)
+	// Registration is not waited for here. A cold profile takes tens of seconds
+	// and a resumed conversation longer still; blocking would hold opMu for that
+	// whole time, so one slot coming up would freeze every other slot's start,
+	// stop and restart behind it — and the caller's HTTP request with them. The
+	// slot reports "starting" until settle resolves it, which is what the
+	// dashboard already renders.
+	go m.settle(w, process)
 	return nil
+}
+
+// settle resolves a freshly started slot once Claude either registers for Remote
+// Control or fails to. A failure keeps the slot in the map as "failed" with the
+// reason attached: dropping it instead would leave the dashboard showing a bare
+// "Not connected", which is indistinguishable from a slot the user stopped and
+// says nothing about what went wrong.
+func (m *Manager) settle(w *worker, process Process) {
+	err := m.waitReady(w, process)
+	if err == nil {
+		m.markRunning(w, process)
+		return
+	}
+	if w.ctx.Err() != nil {
+		// Stopped or restarted deliberately while it was coming up.
+		return
+	}
+	m.markFailed(w, "Claude Remote Control did not become ready: "+err.Error())
+	w.cancel()
+	if signalErr := process.Signal(os.Interrupt); signalErr != nil && !errors.Is(signalErr, os.ErrProcessDone) {
+		_ = process.Kill()
+	}
 }
 
 // Deactivate stops the worker for one slot. Stopping a slot that is not running
@@ -638,19 +687,42 @@ func (m *Manager) supervise(w *worker, process Process) {
 	}
 }
 
+// waitReady blocks until the slot has registered for Remote Control, or until
+// the attempt fails.
+//
+// Registration is confirmed from Claude's own profile state, not from what it
+// printed. Claude draws its banner into a TUI that repaints differentially: on a
+// screen a resumed conversation has already filled, the renderer skips cells
+// that are already correct and jumps over them with cursor-movement escapes, so
+// the advertised link arrives shredded ("claude.ai/coe/session_…") and no
+// pattern can put it back together. The bridge record Claude writes into the
+// profile's .claude.json carries the same fact with no terminal in between, so
+// a resumed slot registers as reliably as a fresh one.
+//
+// Scraped output is still honoured as a fast path and, more importantly, as the
+// only source of the diagnostics that explain a refusal (signed out, workspace
+// untrusted, Remote Control disabled for the account).
 func (m *Manager) waitReady(w *worker, process Process) error {
 	timer := time.NewTimer(m.readyTimeout)
 	defer timer.Stop()
-	select {
-	case <-process.Ready():
-		if err := process.ReadyError(); err != nil {
-			return err
+	poll := time.NewTicker(m.readyPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-process.Ready():
+			if err := process.ReadyError(); err != nil {
+				return err
+			}
+			return nil
+		case <-poll.C:
+			if registeredBridgeURL(w.account.ProfileDir, process.PID()) != "" {
+				return nil
+			}
+		case <-w.ctx.Done():
+			return context.Canceled
+		case <-timer.C:
+			return errors.New("registration timed out")
 		}
-		return nil
-	case <-w.ctx.Done():
-		return context.Canceled
-	case <-timer.C:
-		return errors.New("registration timed out")
 	}
 }
 
@@ -667,9 +739,26 @@ func (m *Manager) markRunning(w *worker, process Process) {
 }
 
 func remoteControlURLForProcess(profileDir string, pid int, fallback string) string {
+	if url := registeredBridgeURL(profileDir, pid); url != "" {
+		return url
+	}
+	return fallback
+}
+
+// registeredBridgeURL reports the Remote Control link Claude registered for one
+// process, or "" when this process has not registered yet. It is both the
+// readiness signal and the link the dashboard hands to the phone.
+//
+// Claude keys the bridge as "cse_<id>" but advertises it as
+// "claude.ai/code/session_<id>" — the same id under two prefixes — so the stored
+// key is rewritten into the form Claude itself prints.
+func registeredBridgeURL(profileDir string, pid int) string {
+	if pid <= 0 {
+		return ""
+	}
 	data, err := os.ReadFile(filepath.Join(profileDir, ".claude.json"))
 	if err != nil {
-		return fallback
+		return ""
 	}
 	var state struct {
 		Bridges map[string]struct {
@@ -677,14 +766,15 @@ func remoteControlURLForProcess(profileDir string, pid int, fallback string) str
 		} `json:"replBridgePlaceholders"`
 	}
 	if err := json.Unmarshal(data, &state); err != nil {
-		return fallback
+		return ""
 	}
 	for bridgeID, bridge := range state.Bridges {
-		if bridge.PID == pid && validBridgeSessionID(bridgeID) {
-			return "https://claude.ai/code/" + bridgeID
+		if bridge.PID != pid || !validBridgeSessionID(bridgeID) {
+			continue
 		}
+		return "https://claude.ai/code/session_" + strings.TrimPrefix(bridgeID, "cse_")
 	}
-	return fallback
+	return ""
 }
 
 func validBridgeSessionID(value string) bool {
@@ -790,12 +880,23 @@ func (m *Manager) clearStopped(w *worker) {
 func (m *Manager) markStopped(w *worker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.workers[w.id] == w {
+	if m.workers[w.id] != w {
+		return
+	}
+	// A slot that settle already failed keeps its reason. The supervisor reaches
+	// here immediately afterwards, because settle cancels the worker to bring the
+	// unregistered process down, and overwriting "failed" with a bare "stopped"
+	// would throw away the only explanation the user gets.
+	if w.state.State == "failed" {
 		m.removeWorkerPID(w.id, w.process)
 		w.state.Running = false
 		w.state.PID = 0
-		w.state.State = "stopped"
+		return
 	}
+	m.removeWorkerPID(w.id, w.process)
+	w.state.Running = false
+	w.state.PID = 0
+	w.state.State = "stopped"
 }
 
 func (m *Manager) markRestarting(w *worker, lastError string) {

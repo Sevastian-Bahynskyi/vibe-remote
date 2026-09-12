@@ -254,9 +254,115 @@ func TestRemoteControlURLForProcessSelectsLiveBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Claude stores the bridge as "cse_<id>" but advertises it as
+	// "code/session_<id>", so the link handed to the phone uses the form Claude
+	// itself prints.
 	got := remoteControlURLForProcess(profile, 202, "https://claude.ai/code")
-	if got != "https://claude.ai/code/cse_live123" {
+	if got != "https://claude.ai/code/session_live123" {
 		t.Fatalf("remoteControlURLForProcess() = %q", got)
+	}
+}
+
+// TestActivateBecomesReadyFromTheBridgeRecord is the regression test for slots
+// that resume a conversation. Such a slot registers for Remote Control normally,
+// but says so into a repainting TUI that breaks the link apart, so scraping the
+// output never sees it. Before the bridge record was consulted these slots hit
+// the ready timeout and were rolled back to "not connected" despite working.
+func TestActivateBecomesReadyFromTheBridgeRecord(t *testing.T) {
+	store := newFakeStore()
+	silent := newSilentFakeProcess(303)
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{silent},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+
+	if err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-resumed", AccountID: account.ID, Workspace: t.TempDir(), Name: "Resumed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Claude registers the bridge in the profile a moment after launch.
+	bridge := []byte(`{"replBridgePlaceholders": {"cse_resumed1": {"pid": 303}}}`)
+	if err := os.WriteFile(filepath.Join(account.ProfileDir, ".claude.json"), bridge, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status := waitForRunning(t, manager, "slot-resumed")
+	if status.RemoteURL != "https://claude.ai/code/session_resumed1" {
+		t.Fatalf("remote URL = %q, want the link Claude registered", status.RemoteURL)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestActivateKeepsTheReasonWhenRegistrationNeverHappens guards the other half
+// of the old behaviour: a slot that failed to register was deleted outright, so
+// the dashboard showed a bare "Not connected" that looked exactly like a slot
+// the user had stopped, with no reason anywhere.
+func TestActivateKeepsTheReasonWhenRegistrationNeverHappens(t *testing.T) {
+	store := newFakeStore()
+	silent := newSilentFakeProcess(404)
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{silent},
+	}
+	manager, err := New(t.TempDir(), store, Options{
+		Runner: runner, StopTimeout: 10 * time.Millisecond,
+		InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond,
+		StableRunWindow: time.Hour,
+		ReadyTimeout:    20 * time.Millisecond,
+		ReadyPoll:       time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := addStoredAccount(t, manager, store)
+
+	if err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-stuck", AccountID: account.ID, Workspace: t.TempDir(), Name: "Stuck",
+	}); err != nil {
+		t.Fatalf("Activate should hand the slot off rather than fail: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var status model.WorkerStatus
+	for {
+		status = manager.Status("slot-stuck")
+		if status.State == "failed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("slot never reported a failure: %#v", status)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if status.Running {
+		t.Fatalf("failed slot still reports running: %#v", status)
+	}
+	if !strings.Contains(status.LastError, "did not become ready") {
+		t.Fatalf("failure reason = %q, want the registration timeout explained", status.LastError)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegisteredBridgeURLReportsNothingBeforeRegistration(t *testing.T) {
+	t.Parallel()
+	profile := t.TempDir()
+	state := []byte(`{"replBridgePlaceholders": {"cse_other": {"pid": 101}}}`)
+	if err := os.WriteFile(filepath.Join(profile, ".claude.json"), state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := registeredBridgeURL(profile, 202); got != "" {
+		t.Fatalf("registeredBridgeURL() = %q, want empty before this process registers", got)
+	}
+	if got := registeredBridgeURL(profile, 101); got != "https://claude.ai/code/session_other" {
+		t.Fatalf("registeredBridgeURL() = %q", got)
 	}
 }
 
@@ -320,14 +426,14 @@ func TestActivateRunsSeveralSlotsAtOnce(t *testing.T) {
 	if signals := first.signalsSeen(); len(signals) != 0 {
 		t.Fatalf("first worker was disturbed by a second slot: %#v", signals)
 	}
-	if manager.RunningCount() != 2 {
-		t.Fatalf("running count = %d, want 2", manager.RunningCount())
-	}
-	if status := manager.Status("slot-a"); !status.Running || status.AccountID != firstAccount.ID || status.PID != 101 {
+	if status := waitForRunning(t, manager, "slot-a"); status.AccountID != firstAccount.ID || status.PID != 101 {
 		t.Fatalf("slot-a status = %#v", status)
 	}
-	if status := manager.Status("slot-b"); !status.Running || status.AccountID != secondAccount.ID || status.PID != 202 {
+	if status := waitForRunning(t, manager, "slot-b"); status.AccountID != secondAccount.ID || status.PID != 202 {
 		t.Fatalf("slot-b status = %#v", status)
+	}
+	if manager.RunningCount() != 2 {
+		t.Fatalf("running count = %d, want 2", manager.RunningCount())
 	}
 	if statuses := manager.Statuses(); len(statuses) != 2 {
 		t.Fatalf("statuses = %#v", statuses)
@@ -362,7 +468,7 @@ func TestActivateReplacesTheWorkerHoldingTheSameSlot(t *testing.T) {
 	if signals := first.signalsSeen(); len(signals) == 0 || signals[0] != os.Interrupt {
 		t.Fatalf("first worker signals = %#v", signals)
 	}
-	if status := manager.Status("slot-a"); !status.Running || status.AccountID != secondAccount.ID || status.PID != 202 {
+	if status := waitForRunning(t, manager, "slot-a"); status.AccountID != secondAccount.ID || status.PID != 202 {
 		t.Fatalf("status = %#v", status)
 	}
 	if manager.RunningCount() != 1 {
@@ -479,6 +585,7 @@ func TestActivateLeavesARunningSlotAloneAfterItAdoptsAConversation(t *testing.T)
 	if err := manager.Activate(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
+	waitForRunning(t, manager, "slot-a")
 	store.linkConversation("slot-a", "conversation-1")
 	if err := manager.Activate(context.Background(), spec); err != nil {
 		t.Fatal(err)
@@ -541,6 +648,24 @@ func TestFilteredEnvironmentRemovesCredentialOverrides(t *testing.T) {
 	got := filteredEnvironment(input)
 	if len(got) != 1 || got[0] != "PATH=/bin" {
 		t.Fatalf("filtered environment = %#v", got)
+	}
+}
+
+// waitForRunning blocks until a slot reports itself running. Activate hands the
+// slot off to a background settle rather than waiting for Claude to register, so
+// "is it running?" is a question with an answer a moment later, not on return.
+func waitForRunning(t *testing.T, manager *Manager, slotID string) model.WorkerStatus {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		status := manager.Status(slotID)
+		if status.Running {
+			return status
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("slot %s did not reach running: %#v", slotID, status)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -769,6 +894,19 @@ type fakeProcess struct {
 	remoteURL           string
 }
 
+// newSilentFakeProcess is a process that never announces itself on its output.
+// It stands in for the real failure this readiness path exists for: Claude
+// repaints its TUI differentially, so a slot resuming a long conversation
+// scrolls its own banner into fragments and the advertised link never arrives
+// intact. Registration has to be observed somewhere other than the terminal.
+func newSilentFakeProcess(pid int) *fakeProcess {
+	return &fakeProcess{
+		pid: pid, exited: make(chan struct{}),
+		interruptTerminates: true, termTerminates: true,
+		ready: make(chan struct{}),
+	}
+}
+
 func newFakeProcess(pid int, interruptTerminates, termTerminates bool) *fakeProcess {
 	process := &fakeProcess{
 		pid: pid, exited: make(chan struct{}),
@@ -822,4 +960,39 @@ func (p *fakeProcess) signalsSeen() []os.Signal {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]os.Signal(nil), p.signals...)
+}
+
+// A slot that is still registering must be left alone by an identical Activate.
+// Restore activates every slot it finds, and before a starting slot counted as
+// live, a second pass would stop the start already under way and begin again.
+func TestActivateLeavesASlotThatIsStillStartingAlone(t *testing.T) {
+	store := newFakeStore()
+	silent := newSilentFakeProcess(505)
+	status := []byte(`{"loggedIn":true,"email":"person@example.com"}`)
+	runner := &fakeRunner{
+		outputs:   [][]byte{status, status},
+		processes: []Process{silent},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+	spec := WorkerSpec{ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project"}
+
+	if err := manager.Activate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if state := manager.Status("slot-a").State; state != "connecting" && state != "starting" {
+		t.Fatalf("state after Activate = %q, want the slot to be coming up", state)
+	}
+	if err := manager.Activate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if runner.startCount() != 1 {
+		t.Fatalf("start count = %d, want 1: a second Activate restarted a slot that was still starting", runner.startCount())
+	}
+	if signals := silent.signalsSeen(); len(signals) != 0 {
+		t.Fatalf("a starting slot was signalled: %#v", signals)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }

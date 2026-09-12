@@ -133,6 +133,29 @@ var migrations = []migration{
 			`UPDATE accounts SET active = 0 WHERE active = 1`,
 		},
 	},
+	{
+		version: 6,
+		statements: []string{
+			// Which session slot a conversation belongs to. The checkpoint hook
+			// already carries the slot in its environment; recording it here is
+			// what lets the dashboard group checkpoints under the chat the user
+			// named instead of listing every conversation flat.
+			`ALTER TABLE sessions ADD COLUMN slot_id TEXT NOT NULL DEFAULT ''`,
+			`CREATE INDEX IF NOT EXISTS sessions_slot_updated
+				ON sessions(slot_id, updated_at DESC)`,
+			// Existing conversations predate the column. Each slot still records
+			// the conversation it is currently talking in, so those are
+			// attributable now; the rest stay unattributed and the dashboard
+			// groups them on their own.
+			`UPDATE sessions SET slot_id = COALESCE((
+				SELECT remote_sessions.id FROM remote_sessions
+				WHERE remote_sessions.resume_session_id = sessions.native_session_id
+				ORDER BY remote_sessions.updated_at DESC
+				LIMIT 1
+			), '')
+			WHERE slot_id = '' AND provider = 'claude'`,
+		},
+	},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

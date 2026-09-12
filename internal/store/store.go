@@ -37,6 +37,7 @@ type HookEvent struct {
 	NativeSessionID  string
 	NativeTurnID     string
 	AccountID        string
+	SlotID           string
 	Title            string
 	WorkspacePath    string
 	WorktreePath     string
@@ -990,7 +991,7 @@ func (s *Store) ListHandoffs(ctx context.Context, includeConsumed bool) ([]model
 }
 
 const sessionSelect = `
-	SELECT id, provider, native_session_id, account_id, title, workspace_path, worktree_path,
+	SELECT id, provider, native_session_id, account_id, slot_id, title, workspace_path, worktree_path,
 		branch, head_sha, state, pinned, last_prompt, updated_at
 	FROM sessions`
 
@@ -1068,7 +1069,7 @@ func scanSession(row scanner) (model.Session, error) {
 	var state string
 	var updatedAt string
 	if err := row.Scan(
-		&session.ID, &provider, &session.NativeSessionID, &session.AccountID, &session.Title,
+		&session.ID, &provider, &session.NativeSessionID, &session.AccountID, &session.SlotID, &session.Title,
 		&session.WorkspacePath, &session.WorktreePath, &session.Branch, &session.HeadSHA,
 		&state, &session.Pinned, &session.LastPrompt, &updatedAt,
 	); err != nil {
@@ -1144,6 +1145,18 @@ func getOrCreateSession(ctx context.Context, tx *sql.Tx, event HookEvent) (model
 	row := tx.QueryRowContext(ctx, sessionSelect+` WHERE provider = ? AND native_session_id = ?`, string(event.Provider), event.NativeSessionID)
 	session, err := scanSession(row)
 	if err == nil {
+		// A conversation belongs to the slot it is currently being talked in.
+		// Re-attributing on change is what keeps a conversation moved to another
+		// slot from staying filed under the chat it came from; conversations
+		// captured before slots were recorded pick up an owner the same way, the
+		// first time they are used again.
+		if slot := strings.TrimSpace(event.SlotID); slot != "" && session.SlotID != slot {
+			if _, updateErr := tx.ExecContext(ctx,
+				`UPDATE sessions SET slot_id = ? WHERE id = ?`, slot, session.ID); updateErr != nil {
+				return model.Session{}, fmt.Errorf("attribute session to slot: %w", updateErr)
+			}
+			session.SlotID = slot
+		}
 		return session, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -1159,6 +1172,7 @@ func getOrCreateSession(ctx context.Context, tx *sql.Tx, event HookEvent) (model
 		Provider:        event.Provider,
 		NativeSessionID: event.NativeSessionID,
 		AccountID:       event.AccountID,
+		SlotID:          strings.TrimSpace(event.SlotID),
 		Title:           title,
 		WorkspacePath:   event.WorkspacePath,
 		WorktreePath:    event.WorktreePath,
@@ -1169,12 +1183,12 @@ func getOrCreateSession(ctx context.Context, tx *sql.Tx, event HookEvent) (model
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO sessions (
-			id, provider, native_session_id, account_id, title, workspace_path, worktree_path,
+			id, provider, native_session_id, account_id, slot_id, title, workspace_path, worktree_path,
 			branch, head_sha, state, pinned, last_prompt, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
 		ON CONFLICT(provider, native_session_id) DO NOTHING`,
-		session.ID, string(session.Provider), session.NativeSessionID, session.AccountID, session.Title,
-		session.WorkspacePath, session.WorktreePath, session.Branch, session.HeadSHA,
+		session.ID, string(session.Provider), session.NativeSessionID, session.AccountID, session.SlotID,
+		session.Title, session.WorkspacePath, session.WorktreePath, session.Branch, session.HeadSHA,
 		string(session.State), formatTime(event.OccurredAt), formatTime(event.OccurredAt),
 	)
 	if err != nil {

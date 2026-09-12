@@ -196,11 +196,21 @@ func extractRemoteControlURL(output string) string {
 		}
 		return parsed.String()
 	}
+	// Wording fallback, for the case where the URL itself arrived broken up by
+	// the TUI's differential repaint. Claude currently announces the session as
+	// "/remote-control is active · Continue here, on your phone, or at"; the
+	// older "take this session with you … press ctrl+c to stop" phrasing is still
+	// accepted so an older Claude keeps working.
+	//
+	// Neither phrase is load-bearing: registration is confirmed from the
+	// profile's bridge record (see Manager.waitReady), because a repaint can
+	// shred this sentence exactly as it shreds the URL.
 	plain := strings.ToLower(output)
-	registered := strings.Contains(plain, "take this session with you") &&
-		strings.Contains(plain, "claude.ai/code") &&
-		strings.Contains(plain, "press ctrl+c to stop")
-	if registered {
+	if !strings.Contains(plain, "claude.ai/code") {
+		return ""
+	}
+	if strings.Contains(plain, "/remote-control is active") ||
+		(strings.Contains(plain, "take this session with you") && strings.Contains(plain, "press ctrl+c to stop")) {
 		return "https://claude.ai/code"
 	}
 	return ""

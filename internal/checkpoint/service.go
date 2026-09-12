@@ -115,6 +115,10 @@ func (s *Service) HandleStdin(
 		return HookResponse{}, err
 	}
 	event.AccountID = origin.AccountID
+	// Carried onto the checkpoint itself, not just onto the slot row below: the
+	// slot row holds only the one conversation it is talking in now, so it is
+	// the checkpoint that has to remember which chat it belonged to.
+	event.SlotID = origin.SlotID
 	// Link before recording: the conversation is the slot's regardless of
 	// whether this particular checkpoint lands, and linking first keeps a
 	// handoff claim from being stranded by a later failure.

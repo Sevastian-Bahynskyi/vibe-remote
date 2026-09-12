@@ -248,7 +248,23 @@ main {
 }
 .row-link { flex-direction: row; justify-content: space-between; min-width: 0; text-align: left; }
 .row-link > svg { flex-shrink: 0; }
-#conversation-list .row-name { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* Chat and checkpoint rows. These two lists are the long ones, so they trade
+   the standard row's breathing room for fitting more entries on a phone screen:
+   tighter padding, a shorter minimum height, and a title held to one line
+   instead of wrapping onto a second. The whole row is still a tap target well
+   above the 44px guideline once padding is counted. */
+.row-tight { padding: 0.5rem 0.625rem; gap: 0.35rem; }
+.row-tight .row-link, .row-tight.row-link { min-height: 2.25rem; gap: 0.5rem; }
+.row-tight .row-name { font-size: 0.9375rem; }
+.row-tight .row-meta { font-size: 0.8125rem; }
+
+.group-summary {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
 #conversation-detail h2 { overflow-wrap: anywhere; font-size: 1.25rem; }
 
 .card-text, .row-text {

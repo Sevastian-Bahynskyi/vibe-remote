@@ -58,7 +58,9 @@
 {{template "workspace-list" .Workspaces}}
 {{end}}
 
-{{define "conversations"}}{{template "conversation-list" .Conversations}}{{end}}
+{{define "conversations"}}{{template "chat-list" .Chats}}{{end}}
+
+{{define "chat"}}{{template "chat-detail" .Chat}}{{end}}
 
 {{define "conversation"}}{{template "conversation-detail" .Conversation}}{{end}}
 

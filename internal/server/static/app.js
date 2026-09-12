@@ -56,7 +56,12 @@
     });
   }
 
-  window.setInterval(function () { refresh(false); }, 5000);
+  // The tick only decides whether anything is due; data-refresh-every decides
+  // whether a request is actually made. Ticking every second costs one query
+  // selector and keeps a region that asked for a fast cadence — a session card
+  // waiting on Claude to register — close to the rate it asked for, instead of
+  // rounding it up to the tick.
+  window.setInterval(function () { refresh(false); }, 1000);
   document.addEventListener('visibilitychange', function () { refresh(false); });
   window.addEventListener('online', function () { refresh(true); });
 
