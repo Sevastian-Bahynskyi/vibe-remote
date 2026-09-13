@@ -379,3 +379,79 @@ func TestOpenDesktopRefusedFromTailnet(t *testing.T) {
 		t.Fatalf("POST open-desktop from the tailnet = %d, want 403", response.Code)
 	}
 }
+
+// signedInRunner answers Claude's auth check affirmatively, so a stored account
+// error can be shown to be stale. Start still refuses, because these tests are
+// about the authentication gate ahead of it, not about registration.
+type signedInRunner struct{ inertRunner }
+
+func (signedInRunner) Output(context.Context, claude.Command) ([]byte, error) {
+	return []byte(`{"loggedIn":true}`), nil
+}
+
+// A stored "not authenticated" can describe a problem that has already gone
+// away: while Claude Code was missing from the system, every auth check failed
+// and marked every account errored. Trusting that record meant the slots stayed
+// down after the binary came back, which is exactly what happened on a restart
+// mid-investigation — the restore reported "account is not authenticated" for an
+// account that was perfectly fine.
+func TestRestoreReverifiesAnAccountMarkedUnauthenticated(t *testing.T) {
+	t.Parallel()
+	service, database := newTestServerWithStore(t, signedInRunner{})
+	seedRunnableSlot(t, service, database, "rs_stale", "aaaaaaaa-2222-4222-8222-222222222222")
+
+	ctx := context.Background()
+	account, err := database.GetAccount(ctx, "aaaaaaaa-2222-4222-8222-222222222222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The state the missing binary left behind.
+	account.Status = model.AccountError
+	account.LastError = "Claude authentication status failed"
+	if _, err := database.UpsertAccount(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+
+	failure := service.restoreOne(ctx, "rs_stale")
+	if strings.Contains(failure, "not authenticated") {
+		t.Fatalf("restore trusted the stale record: %q", failure)
+	}
+	// Start is refused by the stub, so a failure is expected — but it must be
+	// about starting, having got past the authentication gate.
+	if failure == "" {
+		t.Log("slot restored outright")
+	}
+	refreshed, err := database.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Status != model.AccountAuthenticated {
+		t.Errorf("account status = %q, want the re-verification to have corrected it", refreshed.Status)
+	}
+}
+
+// The re-verification must not paper over a real sign-out: an account Claude
+// still reports as logged out has to fail, with Claude's own reason.
+func TestRestoreStillRefusesAGenuinelySignedOutAccount(t *testing.T) {
+	t.Parallel()
+	service, database := newTestServerWithStore(t, inertRunner{})
+	seedRunnableSlot(t, service, database, "rs_out", "bbbbbbbb-3333-4333-8333-333333333333")
+
+	ctx := context.Background()
+	account, err := database.GetAccount(ctx, "bbbbbbbb-3333-4333-8333-333333333333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.Status = model.AccountSignedOut
+	if _, err := database.UpsertAccount(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+
+	failure := service.restoreOne(ctx, "rs_out")
+	if failure == "" {
+		t.Fatal("restore started a slot whose account is signed out")
+	}
+	if !strings.Contains(failure, "signed out") {
+		t.Errorf("failure = %q, want Claude's own reason", failure)
+	}
+}

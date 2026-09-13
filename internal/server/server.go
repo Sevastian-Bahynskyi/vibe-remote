@@ -206,7 +206,20 @@ func (s *Server) restoreOne(ctx context.Context, id string) string {
 		return remote.Name + ": account unavailable"
 	}
 	if account.Status != model.AccountAuthenticated {
-		return remote.Name + ": account is not authenticated"
+		// The stored status can be stale in a way that has already resolved. A
+		// Claude Code that goes missing fails every authentication check while it
+		// is gone and leaves every account marked errored, so trusting the record
+		// keeps the slots down after the binary is back — the record describes a
+		// problem that no longer exists. Ask Claude again before giving up, and
+		// report what it says rather than the stale verdict.
+		//
+		// Activate re-verifies anyway, so this costs one extra check only on the
+		// path that would otherwise have refused to start at all.
+		refreshed, refreshErr := s.claude.Refresh(ctx, account.ID)
+		if refreshErr != nil {
+			return remote.Name + ": " + refreshErr.Error()
+		}
+		account = refreshed
 	}
 	if hookErr := install.InstallClaudeHooks(account.ProfileDir, s.binary); hookErr != nil {
 		return remote.Name + ": " + hookErr.Error()
