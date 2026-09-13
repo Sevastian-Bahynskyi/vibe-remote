@@ -16,6 +16,7 @@ import (
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/model"
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/paths"
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/store"
+	systemstate "github.com/Sevastian-Bahynskyi/vibe-remote/internal/system"
 )
 
 func TestDashboardWorksBehindTailscalePathPrefix(t *testing.T) {
@@ -453,5 +454,53 @@ func TestRestoreStillRefusesAGenuinelySignedOutAccount(t *testing.T) {
 	}
 	if !strings.Contains(failure, "signed out") {
 		t.Errorf("failure = %q, want Claude's own reason", failure)
+	}
+}
+
+// The battery warning is about losing remote access, so it is addressed to a
+// reader who is remote. On the Mac itself it was noise: being on battery is
+// usually why the user is sitting there.
+func TestBatteryWarningOnlyReachesRemoteViewers(t *testing.T) {
+	t.Parallel()
+	service := newTestServer(t)
+	// Pin health rather than shelling out to pmset, so the test says the same
+	// thing on a plugged-in machine as on an unplugged one.
+	service.healthMu.Lock()
+	service.healthValue = systemstate.Health{OnACPower: false}
+	service.healthAt = time.Now()
+	service.healthMu.Unlock()
+
+	ctx := context.Background()
+
+	onTheMac, err := service.snapshot(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onTheMac.PowerWarning != "" {
+		t.Errorf("warning shown on the Mac itself: %q", onTheMac.PowerWarning)
+	}
+	if alerts := buildAlerts(onTheMac); len(alerts) != 0 && strings.Contains(alerts[len(alerts)-1].Message, "battery") {
+		t.Error("battery alert reached the home screen on the Mac")
+	}
+
+	onThePhone, err := service.snapshot(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(onThePhone.PowerWarning, "battery") {
+		t.Errorf("no battery warning for a remote viewer: %q", onThePhone.PowerWarning)
+	}
+
+	// And when it is plugged in, neither surface is warned.
+	service.healthMu.Lock()
+	service.healthValue = systemstate.Health{OnACPower: true}
+	service.healthAt = time.Now()
+	service.healthMu.Unlock()
+	plugged, err := service.snapshot(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plugged.PowerWarning != "" {
+		t.Errorf("warning shown on AC power: %q", plugged.PowerWarning)
 	}
 }

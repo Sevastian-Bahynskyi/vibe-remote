@@ -73,11 +73,17 @@ func (s *Server) snapshot(ctx context.Context, local bool) (dashboardState, erro
 	}
 	decorateSessions(sessions, state.Accounts)
 	state.Sessions = sessions
+	state.OnThisMac = local
 	state.Health = s.health(ctx)
-	if !state.Health.OnACPower {
+	// The warning is about losing remote access, so it only says anything to a
+	// reader who is remote. Being on battery usually means the user is sitting at
+	// the Mac — that is generally why it is unplugged — and warning them there
+	// that the machine under their hands may be unreachable is noise, the kind
+	// that teaches people to stop reading the alert row. The System screen still
+	// reports the power state as a plain fact on both surfaces.
+	if !state.Health.OnACPower && !local {
 		state.PowerWarning = "This Mac is on battery and may become unreachable."
 	}
-	state.OnThisMac = local
 	state.RetentionDays, _ = s.retentionDays()
 	return state, nil
 }
