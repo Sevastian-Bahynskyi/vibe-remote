@@ -452,8 +452,19 @@ func status(layout paths.Layout) error {
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{
 		"version": version, "accounts": accounts, "workspaces": workspaces,
-		"sessions": sessions, "system": systemstate.Inspect(context.Background(), layout.CodexHooks, layout.CodexHookVerified, layout.Binary),
+		"sessions": sessions, "system": systemstate.Inspect(context.Background(), layout.CodexHooks, layout.CodexHookVerified, layout.Binary, claudeBinaryOrEmpty()),
 	})
+}
+
+// claudeBinaryOrEmpty reports the Claude Code executable the service would run,
+// for the status command's JSON. The status command has no manager to ask, so it
+// resolves the same way the runner does.
+func claudeBinaryOrEmpty() string {
+	binary, err := claude.FindBinary()
+	if err != nil {
+		return ""
+	}
+	return binary
 }
 
 func parseProvider(value string) (model.Provider, error) {

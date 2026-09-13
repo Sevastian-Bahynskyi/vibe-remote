@@ -126,14 +126,15 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 
 	runner := options.Runner
 	if runner == nil {
-		binary := strings.TrimSpace(options.ClaudePath)
-		if binary == "" {
-			binary, err = exec.LookPath("claude")
-			if err != nil {
-				return nil, fmt.Errorf("find Claude Code executable: %w", err)
-			}
-		}
-		runner = &execRunner{binary: binary}
+		// A missing Claude Code is deliberately not fatal here. It used to be,
+		// and the cost was out of all proportion: the CLI vanishing — a
+		// half-finished npm upgrade is enough — made the service exit during
+		// construction, launchd respawn it, and the loop take the dashboard down
+		// with it, hiding the one screen that names the cause. The runner
+		// resolves the binary per call instead, so the service stays up, reports
+		// "Claude Code: Not found", fails only the operations that truly need it,
+		// and recovers on its own once the CLI is back.
+		runner = &execRunner{override: strings.TrimSpace(options.ClaudePath)}
 	}
 
 	manager := &Manager{
@@ -539,6 +540,22 @@ func (m *Manager) Statuses() []model.WorkerStatus {
 	}
 	sort.Slice(statuses, func(left, right int) bool { return statuses[left].ID < statuses[right].ID })
 	return statuses
+}
+
+// BinaryPath reports the Claude Code executable this manager would run, or ""
+// when none can be found. The dashboard's health panel shows it, so the row and
+// the behaviour come from one answer rather than two lookups that can disagree.
+func (m *Manager) BinaryPath() string {
+	runner, ok := m.runner.(*execRunner)
+	if !ok {
+		// An injected runner supplies its own executable; nothing to report.
+		return ""
+	}
+	binary, err := runner.binaryPath()
+	if err != nil {
+		return ""
+	}
+	return binary
 }
 
 // RunningCount reports how many slots are currently serving Remote Control.

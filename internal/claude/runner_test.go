@@ -8,7 +8,7 @@ import (
 
 func TestExecRunnerStartsClaudeWithTerminal(t *testing.T) {
 	t.Parallel()
-	runner := &execRunner{binary: "/bin/sh"}
+	runner := &execRunner{override: "/bin/sh"}
 	process, err := runner.Start(Command{Args: []string{"-c", `
 if [ -t 0 ] && [ -t 1 ]; then
   printf 'Take this session with you. Open claude.ai/code. Press Ctrl+C to stop.\n'

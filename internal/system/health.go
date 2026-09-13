@@ -25,14 +25,18 @@ type Health struct {
 	ClaudeDesktop       bool   `json:"claudeDesktop"`
 }
 
-func Inspect(ctx context.Context, codexHooksPath, codexHookVerified, binary string) Health {
+// Inspect reports system health. claudeBinary is the Claude Code executable the
+// service would actually run, passed in rather than looked up here: the runner
+// falls back past PATH to Claude Desktop's bundled copy, and a second lookup
+// here would report "not found" for a service that is working fine.
+func Inspect(ctx context.Context, codexHooksPath, codexHookVerified, binary, claudeBinary string) Health {
 	installed := codexHooksInstalled(codexHooksPath, binary)
 	verified := CodexHooksVerified(codexHooksPath, codexHookVerified, binary)
 	health := Health{
 		OnACPower:           onACPower(ctx),
 		CodexHooks:          installed && verified,
 		CodexHooksInstalled: installed,
-		ClaudeBinary:        commandExists("claude"),
+		ClaudeBinary:        strings.TrimSpace(claudeBinary) != "",
 		CodexBinary:         commandExists("codex"),
 		ClaudeDesktop:       ClaudeDesktopApp() != "",
 	}

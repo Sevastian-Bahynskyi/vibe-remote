@@ -40,12 +40,45 @@ type CommandRunner interface {
 	Start(Command) (Process, error)
 }
 
+// execRunner runs the unmodified Claude Code binary, resolving where it lives
+// at the moment it is needed. An explicit override is honoured as given; an
+// empty one is looked up through FindBinary on every call, so the service
+// survives Claude Code being absent and starts working the moment it returns.
 type execRunner struct {
-	binary string
+	override string
+
+	mu       sync.Mutex
+	resolved string
+}
+
+// binaryPath reports the executable to run. A successful lookup is remembered,
+// because the common case is a stable install and the search touches the disk.
+func (r *execRunner) binaryPath() (string, error) {
+	if override := strings.TrimSpace(r.override); override != "" {
+		return override, nil
+	}
+	r.mu.Lock()
+	cached := r.resolved
+	r.mu.Unlock()
+	if cached != "" && usableBinary(cached) {
+		return cached, nil
+	}
+	found, err := FindBinary()
+	if err != nil {
+		return "", err
+	}
+	r.mu.Lock()
+	r.resolved = found
+	r.mu.Unlock()
+	return found, nil
 }
 
 func (r *execRunner) RunInteractive(ctx context.Context, command Command) error {
-	cmd := exec.CommandContext(ctx, r.binary, command.Args...)
+	binary, err := r.binaryPath()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, binary, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = command.Env
 	// Login opens Anthropic's browser flow. Suppress terminal output so OAuth
@@ -57,23 +90,31 @@ func (r *execRunner) RunInteractive(ctx context.Context, command Command) error 
 }
 
 func (r *execRunner) Output(ctx context.Context, command Command) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, r.binary, command.Args...)
+	binary, err := r.binaryPath()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, binary, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = command.Env
 	return cmd.Output()
 }
 
 func (r *execRunner) Start(command Command) (Process, error) {
-	cmd := exec.Command(r.binary, command.Args...)
+	binary, err := r.binaryPath()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(binary, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = command.Env
 	process := &execProcess{cmd: cmd, ready: make(chan struct{}), done: make(chan struct{})}
 	observer := &readinessWriter{process: process}
 	// Inspect output for the short-lived Remote Control URL. It is kept only in
 	// process memory so the tailnet dashboard can open the registered session.
-	terminal, err := pty.Start(cmd)
-	if err != nil {
-		return nil, err
+	terminal, startErr := pty.Start(cmd)
+	if startErr != nil {
+		return nil, startErr
 	}
 	process.terminal = terminal
 	go func() {

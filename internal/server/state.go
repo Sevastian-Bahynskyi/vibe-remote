@@ -111,7 +111,7 @@ func (s *Server) health(ctx context.Context) systemstate.Health {
 	if !s.healthAt.IsZero() && time.Since(s.healthAt) < healthTTL {
 		return s.healthValue
 	}
-	s.healthValue = systemstate.Inspect(ctx, s.layout.CodexHooks, s.layout.CodexHookVerified, s.layout.Binary)
+	s.healthValue = systemstate.Inspect(ctx, s.layout.CodexHooks, s.layout.CodexHookVerified, s.layout.Binary, s.claude.BinaryPath())
 	s.healthAt = time.Now()
 	return s.healthValue
 }
