@@ -29,12 +29,15 @@ func TestParseHookEventAcceptsClaudeAndCodexFieldNames(t *testing.T) {
 		"turnId":"turn-1",
 		"hookEventName":"Stop",
 		"lastAssistantMessage":"done",
+		"model":"gpt-5.6-sol",
+		"effort":{"level":"high"},
 		"cwd":"/workspace"
 	}`))
 	if err != nil {
 		t.Fatalf("parse Codex hook: %v", err)
 	}
-	if codex.Kind != store.HookEventStop || codex.NativeTurnID != "turn-1" || codex.AssistantMessage != "done" {
+	if codex.Kind != store.HookEventStop || codex.NativeTurnID != "turn-1" || codex.AssistantMessage != "done" ||
+		codex.Model != "" || codex.Effort != "" {
 		t.Fatalf("unexpected Codex hook: %#v", codex)
 	}
 }
@@ -86,12 +89,47 @@ func TestParseClaudeSessionStart(t *testing.T) {
 		"session_id":"claude-session",
 		"hook_event_name":"SessionStart",
 		"source":"startup",
+		"model":"claude-opus-4-1",
+		"effort":{"level":"high"},
 		"cwd":"/workspace"
 	}`))
 	if err != nil {
 		t.Fatalf("parse Claude session start: %v", err)
 	}
-	if event.Kind != store.HookEventSessionStart || event.NativeSessionID != "claude-session" {
+	if event.Kind != store.HookEventSessionStart || event.NativeSessionID != "claude-session" ||
+		event.Model != "claude-opus-4-1" || event.Effort != "high" {
 		t.Fatalf("unexpected Claude session start: %#v", event)
+	}
+}
+
+func TestParseClaudeModelSwitchAndDropsInvalidSettings(t *testing.T) {
+	t.Parallel()
+
+	switched, err := ParseHookEvent(model.ProviderClaude, []byte(`{
+		"session_id":"claude-session",
+		"hook_event_name":"PostModelSwitch",
+		"from_model":"claude-sonnet-4-5",
+		"to_model":"claude-opus-4-1",
+		"cwd":"/workspace"
+	}`))
+	if err != nil {
+		t.Fatalf("parse model switch: %v", err)
+	}
+	if switched.Kind != store.HookEventModelSwitch || switched.Model != "claude-opus-4-1" {
+		t.Fatalf("unexpected model switch: %#v", switched)
+	}
+
+	invalid, err := ParseHookEvent(model.ProviderClaude, []byte(`{
+		"session_id":"claude-session",
+		"hook_event_name":"Stop",
+		"model":"--dangerously-skip-permissions",
+		"effort":{"level":"unlimited"},
+		"cwd":"/workspace"
+	}`))
+	if err != nil {
+		t.Fatalf("parse invalid settings payload: %v", err)
+	}
+	if invalid.Model != "" || invalid.Effort != "" {
+		t.Fatalf("invalid settings survived parsing: %#v", invalid)
 	}
 }

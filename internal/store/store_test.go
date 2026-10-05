@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -488,13 +489,16 @@ func TestRemoteSessionsCoexistPerAccountAndWorkspace(t *testing.T) {
 	}
 	second, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
 		Name: "Second", AccountID: account.ID, WorkspaceID: workspace.ID, WorkspacePath: workspace.Path,
-		ResumeSessionID: "native-1",
+		ResumeSessionID: "native-1", Model: "claude-opus-4-1", Effort: "high",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID == second.ID {
 		t.Fatal("two remote sessions in one workspace shared an ID")
+	}
+	if second.Model != "claude-opus-4-1" || second.Effort != "high" {
+		t.Fatalf("agent settings did not round trip: %#v", second)
 	}
 	if first.Desired != model.DesiredRunning {
 		t.Fatalf("default desired state = %q", first.Desired)
@@ -520,6 +524,84 @@ func TestRemoteSessionsCoexistPerAccountAndWorkspace(t *testing.T) {
 	remaining, err := database.ListRemoteSessions(ctx)
 	if err != nil || len(remaining) != 0 {
 		t.Fatalf("removing an account left remote sessions behind: %#v, %v", remaining, err)
+	}
+}
+
+func TestRecordAgentSettingsMergesNonEmptyValues(t *testing.T) {
+	t.Parallel()
+	database := openTestStore(t, filepath.Join(t.TempDir(), "state.db"), time.Now)
+	defer database.Close()
+	ctx := context.Background()
+
+	if err := database.RecordAgentSettings(ctx, model.ProviderClaude, "session-1", AgentSettings{
+		Model: "claude-opus-4-1", Effort: "high",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RecordAgentSettings(ctx, model.ProviderClaude, "session-1", AgentSettings{Effort: "max"}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := database.GetAgentSettings(ctx, model.ProviderClaude, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Model != "claude-opus-4-1" || settings.Effort != "max" {
+		t.Fatalf("merged settings = %#v", settings)
+	}
+	if err := database.RecordAgentSettings(ctx, model.ProviderClaude, "session-1", AgentSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := database.GetAgentSettings(ctx, model.ProviderClaude, "session-1")
+	if err != nil || again != settings {
+		t.Fatalf("empty update clobbered settings: %#v, %v", again, err)
+	}
+	if err := database.RecordAgentSettings(ctx, model.ProviderClaude, "session-1", AgentSettings{Model: "--unsafe"}); err == nil {
+		t.Fatal("unsafe model was accepted")
+	}
+}
+
+func TestMigrationSevenUpgradesVersionSixDatabase(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "state.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range migrations {
+		if item.version > 6 {
+			break
+		}
+		for _, statement := range item.statements {
+			if _, err := raw.Exec(statement); err != nil {
+				t.Fatalf("apply migration %d fixture: %v", item.version, err)
+			}
+		}
+		if _, err := raw.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, item.version, formatTime(time.Now().UTC())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database := openTestStore(t, path, time.Now)
+	defer database.Close()
+	var version int
+	if err := database.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	for _, column := range []string{"model", "effort"} {
+		var count int
+		if err := database.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('remote_sessions') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("remote_sessions.%s missing: count=%d err=%v", column, count, err)
+		}
+	}
+	var tableCount int
+	if err := database.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_agents'`).Scan(&tableCount); err != nil || tableCount != 1 {
+		t.Fatalf("session_agents missing: count=%d err=%v", tableCount, err)
 	}
 }
 

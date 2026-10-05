@@ -34,6 +34,19 @@ func ParseHookEvent(provider model.Provider, payload []byte) (store.HookEvent, e
 		Prompt:           firstString(object, "prompt"),
 		AssistantMessage: firstString(object, "last_assistant_message", "lastAssistantMessage", "last-assistant-message"),
 	}
+	if provider == model.ProviderClaude {
+		event.Model = firstString(object, "model")
+		event.Effort = firstNestedString(object, "effort", "level")
+		if kind == store.HookEventModelSwitch {
+			event.Model = firstString(object, "to_model", "model")
+		}
+		if !model.ValidModelName(event.Model) {
+			event.Model = ""
+		}
+		if !model.ValidEffortLevel(event.Effort) {
+			event.Effort = ""
+		}
+	}
 	if event.NativeSessionID == "" {
 		return store.HookEvent{}, errors.New("hook event is missing session id")
 	}
@@ -87,6 +100,8 @@ func parseEventKind(name string) (store.HookEventKind, error) {
 		return store.HookEventInterrupt, nil
 	case "StopFailure", "stop_failure", "stop-failure":
 		return store.HookEventFailure, nil
+	case "PostModelSwitch", "post_model_switch", "post-model-switch":
+		return store.HookEventModelSwitch, nil
 	case "agent-turn-complete", "AgentTurnComplete":
 		return store.HookEventComplete, nil
 	default:
@@ -106,6 +121,18 @@ func firstString(object map[string]json.RawMessage, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNestedString(object map[string]json.RawMessage, objectKey string, keys ...string) string {
+	raw, found := object[objectKey]
+	if !found {
+		return ""
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &nested); err != nil {
+		return ""
+	}
+	return firstString(nested, keys...)
 }
 
 func firstStringSlice(object map[string]json.RawMessage, keys ...string) []string {

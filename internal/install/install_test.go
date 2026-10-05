@@ -150,6 +150,9 @@ func TestInstallClaudeHooksIsIdempotentAndRepairsOwnedHandler(t *testing.T) {
 	if _, ok := hooks["SessionStart"].([]any); !ok {
 		t.Fatal("SessionStart hook was not installed")
 	}
+	if _, ok := hooks["PostModelSwitch"].([]any); !ok {
+		t.Fatal("PostModelSwitch hook was not installed")
+	}
 	groups := hooks["UserPromptSubmit"].([]any)
 	handlers := groups[0].(map[string]any)["hooks"].([]any)
 	if len(handlers) != 2 {

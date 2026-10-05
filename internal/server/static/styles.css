@@ -275,12 +275,17 @@ main {
 }
 
 .card-name, .row-name {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	min-width: 0;
   font-size: 1rem;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.row-name > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .card-meta, .row-meta {
   font-size: 0.875rem;
@@ -427,6 +432,17 @@ main {
 .section-title { margin: 0.5rem 0 0; font-size: 1rem; }
 .warn-line { margin: 0; font-size: 0.9375rem; color: var(--warning); }
 .pin { color: var(--warning); }
+.agent-tag {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--surface-subtle);
+  border-radius: 4px;
+}
+.agent-tag[data-agent="codex"] { color: var(--info); }
 
 /* ---- confirmation ----------------------------------------------------- */
 

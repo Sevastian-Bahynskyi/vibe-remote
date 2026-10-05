@@ -36,6 +36,14 @@ func TestAddUsesIsolatedOfficialLoginAndVerifiesEmail(t *testing.T) {
 	if info, statErr := os.Stat(account.ProfileDir); statErr != nil || !info.IsDir() {
 		t.Fatalf("profile was not created: %v", statErr)
 	}
+	style, styleErr := os.ReadFile(filepath.Join(account.ProfileDir, "output-styles", "Codex.md"))
+	if styleErr != nil || string(style) != codexOutputStyle {
+		t.Fatalf("Codex output style = %q, error = %v", style, styleErr)
+	}
+	settings, settingsErr := os.ReadFile(filepath.Join(account.ProfileDir, "settings.json"))
+	if settingsErr != nil || string(settings) != `{"outputStyle":"Codex"}` {
+		t.Fatalf("output style settings = %q, error = %v", settings, settingsErr)
+	}
 
 	login := runner.interactiveAt(t, 0)
 	wantArgs := []string{"auth", "login", "--claudeai", "--email", "person@example.com"}
@@ -135,7 +143,7 @@ func TestActivateStartsRemoteControlAndExportsAccountID(t *testing.T) {
 		t.Fatalf("Activate() error = %v", err)
 	}
 	command := runner.startAt(t, 0)
-	if got := strings.Join(command.Args, " "); got != "--dangerously-skip-permissions --chrome --verbose --remote-control Project A" {
+	if got := strings.Join(command.Args, " "); got != "--permission-mode auto --chrome --verbose --remote-control Project A" {
 		t.Fatalf("worker command = %q", got)
 	}
 	if command.Dir != workspace {
@@ -159,7 +167,7 @@ func TestActivateStartsRemoteControlAndExportsAccountID(t *testing.T) {
 	}
 	assertEnv(t, command.Env, "CLAUDE_CONFIG_DIR", account.ProfileDir)
 	assertEnv(t, command.Env, "VIBE_REMOTE_ACCOUNT_ID", account.ID)
-	if status := manager.Status("slot-a"); !status.Running || status.PID != 101 || status.AccountID != account.ID {
+	if status := waitForRunning(t, manager, "slot-a"); !status.Running || status.PID != 101 || status.AccountID != account.ID {
 		t.Fatalf("status = %#v", status)
 	} else if status.RemoteURL != "https://claude.ai/code/cse_test" {
 		t.Fatalf("RemoteURL = %q", status.RemoteURL)
@@ -495,9 +503,59 @@ func TestActivateResumesTheRequestedConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Activate() error = %v", err)
 	}
-	want := "--dangerously-skip-permissions --chrome --verbose --resume 9f2c1d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f --remote-control Project"
+	want := "--permission-mode auto --chrome --verbose --resume 9f2c1d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f --remote-control Project"
 	if got := strings.Join(runner.startAt(t, 0).Args, " "); got != want {
 		t.Fatalf("worker command = %q, want %q", got, want)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActivateCarriesModelAndEffortFlags(t *testing.T) {
+	store := newFakeStore()
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{newFakeProcess(101, true, true)},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+
+	err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project",
+		Model: "claude-opus-4-1", Effort: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "--permission-mode auto --chrome --verbose --model claude-opus-4-1 --effort high --remote-control Project"
+	if got := strings.Join(runner.startAt(t, 0).Args, " "); got != want {
+		t.Fatalf("worker command = %q, want %q", got, want)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoredAgentSettingsWinOnLaunch(t *testing.T) {
+	store := newFakeStore()
+	store.slots["slot-a"] = model.RemoteSession{ID: "slot-a", Model: "claude-opus-4-1", Effort: "max"}
+	runner := &fakeRunner{
+		outputs:   [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)},
+		processes: []Process{newFakeProcess(101, true, true)},
+	}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+	err := manager.Activate(context.Background(), WorkerSpec{
+		ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project",
+		Model: "claude-sonnet-4-5", Effort: "low",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(runner.startAt(t, 0).Args, " ")
+	if !strings.Contains(args, "--model claude-opus-4-1") || !strings.Contains(args, "--effort max") {
+		t.Fatalf("stored settings did not win: %q", args)
 	}
 	if err := manager.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -558,7 +616,7 @@ func TestRestartResumesTheConversationTheSlotAdopted(t *testing.T) {
 		return status.Running && status.PID == 202
 	})
 
-	want := "--dangerously-skip-permissions --chrome --verbose --resume conversation-1 --remote-control Project"
+	want := "--permission-mode auto --chrome --verbose --resume conversation-1 --remote-control Project"
 	if got := strings.Join(runner.startAt(t, 1).Args, " "); got != want {
 		t.Fatalf("restart command = %q, want %q", got, want)
 	}

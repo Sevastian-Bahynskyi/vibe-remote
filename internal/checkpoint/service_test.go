@@ -104,7 +104,7 @@ func TestContinueConsumesOneHandoffAndEmitsBoundedContext(t *testing.T) {
 	}
 }
 
-func TestOnlyExactTrimmedLowercaseContinueConsumesHandoff(t *testing.T) {
+func TestReasonableContinueConsumesHandoff(t *testing.T) {
 	t.Parallel()
 
 	database := openCheckpointStore(t)
@@ -130,17 +130,70 @@ func TestOnlyExactTrimmedLowercaseContinueConsumesHandoff(t *testing.T) {
 		"session_id":"destination",
 		"turn_id":"turn",
 		"hook_event_name":"UserPromptSubmit",
-		"prompt":"Continue",
+		"prompt":"please Continue.",
 		"cwd":`+quotedJSON(workspace)+`
 	}`))
 	if err != nil {
-		t.Fatalf("handle non-matching prompt: %v", err)
+		t.Fatalf("handle continue prompt: %v", err)
 	}
-	if len(response.Output) != 0 || response.Consumed != nil {
-		t.Fatalf("non-exact prompt consumed handoff: %#v", response)
+	if len(response.Output) == 0 {
+		t.Fatalf("reasonable prompt did not claim handoff: %#v", response)
 	}
-	if _, err := database.ConsumeHandoff(ctx, model.ProviderClaude, "claude-main", workspace); err != nil {
-		t.Fatalf("handoff was not left available: %v", err)
+	if err := response.Finalize(ctx); err != nil {
+		t.Fatalf("finalize handoff: %v", err)
+	}
+	if response.Consumed == nil {
+		t.Fatal("handoff was not consumed")
+	}
+}
+
+func TestLifecycleHooksRecordAgentSettingsWithoutCreatingCheckpoint(t *testing.T) {
+	t.Parallel()
+	database := openCheckpointStore(t)
+	defer database.Close()
+	ctx := context.Background()
+	workspace := t.TempDir()
+	account, err := database.UpsertAccount(ctx, model.Account{Email: "person@example.com", Status: model.AccountAuthenticated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := database.UpsertRemoteSession(ctx, model.RemoteSession{
+		ID: "slot-a", Name: "Agent settings", AccountID: account.ID, WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(database, staticGitCapturer{snapshot: model.GitSnapshot{Root: workspace, CapturedAt: time.Now()}})
+	response, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID, SlotID: slot.ID}, strings.NewReader(`{
+		"session_id":"claude-session",
+		"hook_event_name":"SessionStart",
+		"model":"claude-sonnet-4-5",
+		"cwd":`+quotedJSON(workspace)+`
+	}`))
+	if err != nil || !response.Ignored {
+		t.Fatalf("session start = %#v, %v", response, err)
+	}
+	sessions, err := database.ListSessions(ctx, store.SessionFilter{})
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("lifecycle hook created a checkpoint: %#v, %v", sessions, err)
+	}
+	stored, err := database.GetAgentSettings(ctx, model.ProviderClaude, "claude-session")
+	if err != nil || stored.Model != "claude-sonnet-4-5" {
+		t.Fatalf("stored settings = %#v, %v", stored, err)
+	}
+
+	response, err = service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID, SlotID: slot.ID}, strings.NewReader(`{
+		"session_id":"claude-session",
+		"hook_event_name":"PostModelSwitch",
+		"to_model":"claude-opus-4-1",
+		"cwd":`+quotedJSON(workspace)+`
+	}`))
+	if err != nil || !response.Ignored {
+		t.Fatalf("model switch = %#v, %v", response, err)
+	}
+	updated, err := database.GetRemoteSession(ctx, slot.ID)
+	if err != nil || updated.Model != "claude-opus-4-1" {
+		t.Fatalf("slot settings = %#v, %v", updated, err)
 	}
 }
 

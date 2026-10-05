@@ -156,6 +156,21 @@ var migrations = []migration{
 			WHERE slot_id = '' AND provider = 'claude'`,
 		},
 	},
+	{
+		version: 7,
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS session_agents (
+				provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex')),
+				native_session_id TEXT NOT NULL,
+				model TEXT NOT NULL DEFAULT '',
+				effort TEXT NOT NULL DEFAULT '',
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (provider, native_session_id)
+			)`,
+			`ALTER TABLE remote_sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE remote_sessions ADD COLUMN effort TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

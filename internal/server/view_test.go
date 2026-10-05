@@ -350,6 +350,55 @@ func TestBuildChatGroupsGroupsCheckpointsUnderTheirChat(t *testing.T) {
 	}
 }
 
+func TestBuildChatGroupsSeparatesCodexFoldersAndPinsEarlierLast(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	state := dashboardState{
+		Remotes: []model.RemoteSession{{ID: "rs_live", Name: "Live Claude", WorkspacePath: "/work/live"}},
+		Sessions: []model.Session{
+			{ID: "live", Provider: model.ProviderClaude, SlotID: "rs_live", UpdatedAt: now.Add(-4 * time.Hour)},
+			{ID: "codex-a", Provider: model.ProviderCodex, WorkspacePath: "/work/couplegoai", UpdatedAt: now.Add(-time.Hour)},
+			{ID: "codex-b", Provider: model.ProviderCodex, WorkspacePath: "/work/couplegoai", UpdatedAt: now.Add(-2 * time.Hour)},
+			{ID: "codex-c", Provider: model.ProviderCodex, WorkspacePath: "/work/vibe-remote", UpdatedAt: now.Add(-3 * time.Hour)},
+			{ID: "earlier", Provider: model.ProviderClaude, UpdatedAt: now},
+		},
+	}
+
+	groups := buildChatGroups(state, now)
+	if len(groups) != 4 {
+		t.Fatalf("groups = %#v", groups)
+	}
+	if groups[0].ID != "rs_live" || !groups[0].Live {
+		t.Fatalf("live group was not first: %#v", groups)
+	}
+	if groups[1].ID != codexChatPrefix+"/work/couplegoai" || groups[1].Name != "Codex · couplegoai" || groups[1].Count != "2 checkpoints" {
+		t.Fatalf("first Codex group = %#v", groups[1])
+	}
+	if groups[1].Agent != "codex" || groups[1].AgentLabel != "Codex" {
+		t.Fatalf("Codex group agent = %#v", groups[1])
+	}
+	if groups[3].ID != unattributedChatID {
+		t.Fatalf("earlier group was not pinned last: %#v", groups)
+	}
+	conversation := groups[1].Conversations[0]
+	if conversation.Agent != "codex" || conversation.AgentLabel != "Codex" {
+		t.Fatalf("Codex conversation agent = %#v", conversation)
+	}
+}
+
+func TestBuildConversationIncludesAgentSettings(t *testing.T) {
+	t.Parallel()
+	view := buildConversation(model.Session{
+		Provider: model.ProviderClaude, Model: "claude-opus-4-1", Effort: "high",
+	}, time.Now())
+	if view.Agent != "claude" || view.AgentLabel != "Claude" || view.Provider != "Claude" {
+		t.Fatalf("agent labels = %#v", view)
+	}
+	if view.Model != "claude-opus-4-1" || view.Effort != "high" {
+		t.Fatalf("agent settings = %#v", view)
+	}
+}
+
 func TestBuildChatGroupsPutsPinnedCheckpointsFirstWithinAChat(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)

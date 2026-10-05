@@ -9,7 +9,7 @@ Vibe Remote is a small macOS service for choosing which Claude subscription is a
 - Remembers which conversation each session is talking in, so a restarted service resumes it instead of opening an empty one.
 - Exposes a mobile dashboard only through Tailscale Serve at `/vibe-remote/`; the app itself listens only on `127.0.0.1:47173`.
 - Captures provider-neutral session checkpoints from official Claude and Codex hooks without an LLM call.
-- Continues a checkpoint on another Claude account in one click: creates a session with the source slot's name and workspace, attaches the latest eight captured turns plus live Git state, and starts continuation automatically. Codex destinations retain the 48-hour handoff and manual `continue` trigger.
+- Continues a checkpoint on another Claude account in one click: creates a session with the source slot's name and workspace, attaches the latest eight captured turns plus live Git state, and starts continuation automatically. Codex destinations retain the 48-hour handoff and accept natural requests to continue.
 - Keeps closed checkpoints for 7 days by default. Change the period under System (1–3650 days); saving applies cleanup immediately without restarting. The setting survives daemon restarts. Pinned checkpoints are retained until unpinned, and working sessions are protected. Cleanup removes Vibe Remote checkpoints, not project files or native Claude history.
 - Blocks idle sleep on AC power only while slots are actually serving Remote Control, and tracks the battery cost of doing so. Closing the lid can still make it unavailable, by design.
 
@@ -55,7 +55,7 @@ Open the URL shown by:
 
 ## Running and switching sessions
 
-Start as many sessions as you need. Each one gets a distinct Remote Control name — by default `Vibe Remote · <email> · <workspace>`, made unique with a numeric suffix — so parallel sessions are told apart in the Claude app. Starting, stopping, restarting, or removing one session never disturbs the others.
+Start as many sessions as you need. Each one gets a distinct Remote Control name — by default `Vibe Remote · <email> · <workspace>`, made unique with a numeric suffix — so parallel sessions are told apart in the Claude app. Starting, stopping, restarting, or removing one session never disturbs the others. Managed sessions start in Claude’s `auto` permission mode, which checks tool actions and can recognize specific approvals stated in chat. Restart a session to apply this launch setting; existing running sessions keep their current mode.
 
 **Move / edit** on a session card changes its account, workspace, conversation, or name and restarts it so the change takes effect. **Restart** reapplies the current settings in place. Both first request a graceful stop; if active work does not stop, the dashboard asks before forcing it, and every open checkpoint known to that worker is marked interrupted with a fresh Git snapshot before termination.
 
@@ -71,9 +71,9 @@ The dashboard is the same page on the Mac and on the phone. Opened on the Mac it
 
 1. Pick the exact source session in **Session checkpoints**.
 2. Choose a Claude email or Codex as the destination.
-3. For another Claude account, open the automatically created destination session to follow its progress; no message is required. A matching source slot is stopped first. Retrying reuses the destination conversation, leaving unrelated slots alone. For Codex, open the destination in the same workspace and type exactly `continue`.
+3. For another Claude account, open the automatically created destination session to follow its progress; no message is required. A matching source slot is stopped first. Retrying reuses the destination conversation, leaving unrelated slots alone. For Codex, open the destination in the same workspace and ask it to continue.
 
-The checkpoint contains visible captured prompts/responses, branch, HEAD, status, and changed paths, capped at 12,000 characters. It does not parse private transcript files. Automatic Claude continuation uses a private, slot-specific file, removed after delivery through the prompt hook; checkpoint text never appears in process arguments. Failed starts retain it for retry. Manual handoffs use a short SQLite claim lease so concurrent `continue` prompts cannot consume the same ticket. Hook protocols provide no post-injection acknowledgment, so the final boundary is best-effort after the context has been written successfully to the provider hook pipe. This transfers checkpoint context, not the complete native conversation history.
+The checkpoint contains visible captured prompts/responses, branch, HEAD, status, and changed paths, capped at 12,000 characters. It does not parse private transcript files. Automatic Claude continuation uses a private, slot-specific file, removed after delivery through the prompt hook; checkpoint text never appears in process arguments. Failed starts retain it for retry. Manual handoffs use a short SQLite claim lease so concurrent continuation prompts cannot consume the same ticket. Hook protocols provide no post-injection acknowledgment, so the final boundary is best-effort after the context has been written successfully to the provider hook pipe. This transfers checkpoint context, not the complete native conversation history.
 
 For a native Claude session, **Copy resume command** restores the correct isolated account. After resuming locally, type `/desktop` to move that CLI conversation into Claude Desktop. Claude Desktop and CLI keep separate history until that explicit transfer.
 

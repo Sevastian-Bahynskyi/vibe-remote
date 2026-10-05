@@ -248,6 +248,8 @@ func workerSpec(remote model.RemoteSession) claude.WorkerSpec {
 		Workspace:       remote.WorkspacePath,
 		Name:            remote.Name,
 		ResumeSessionID: remote.ResumeSessionID,
+		Model:           remote.Model,
+		Effort:          remote.Effort,
 	}
 }
 

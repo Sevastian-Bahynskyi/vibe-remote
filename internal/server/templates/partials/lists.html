@@ -66,7 +66,7 @@
   {{range .}}
   <a class="row row-link row-tight" href="{{screen "chat" .ID}}" hx-get="{{screen "chat" .ID}}" hx-target="#app" hx-push-url="true">
     <div class="row-text">
-      <span class="row-name">{{.Name}}</span>
+      <span class="row-name"><span>{{.Name}}</span><span class="agent-tag" data-agent="{{.Agent}}">{{.AgentLabel}}</span></span>
       <span class="row-meta">{{.Count}}{{if .Ago}} · {{.Ago}}{{end}}{{if .Meta}} · {{.Meta}}{{end}}</span>
     </div>
     <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -90,7 +90,7 @@
   {{range .}}
   <a class="row row-link row-tight" href="{{screen "conversation" .ID}}" hx-get="{{screen "conversation" .ID}}" hx-target="#app" hx-push-url="true">
     <div class="row-text">
-      <span class="row-name">{{if .Pinned}}<span class="pin" aria-label="Pinned">★</span> {{end}}{{.Title}}</span>
+      <span class="row-name"><span>{{if .Pinned}}<span class="pin" aria-label="Pinned">★</span> {{end}}{{.Title}}</span><span class="agent-tag" data-agent="{{.Agent}}">{{.AgentLabel}}</span></span>
       <span class="row-meta">{{.State}}{{if .Ago}} · {{.Ago}}{{end}}{{if .ChatName}} · {{.ChatName}}{{end}}</span>
     </div>
     <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -106,7 +106,9 @@
   <h2>{{.Title}}</h2>
   <dl class="facts">
     {{if .ChatName}}<div><dt>Chat</dt><dd>{{.ChatName}}</dd></div>{{end}}
-    <div><dt>Agent</dt><dd>{{.Provider}}</dd></div>
+    <div><dt>Agent</dt><dd>{{.AgentLabel}}</dd></div>
+    {{if .Model}}<div><dt>Model</dt><dd class="mono">{{.Model}}</dd></div>{{end}}
+    {{if .Effort}}<div><dt>Effort</dt><dd>{{.Effort}}</dd></div>{{end}}
     <div><dt>State</dt><dd data-tone="{{.Tone}}">{{.State}}</dd></div>
     <div><dt>Folder</dt><dd class="mono">{{.WorkspacePath}}</dd></div>
     {{if .Branch}}<div><dt>Branch</dt><dd class="mono">{{.Branch}}</dd></div>{{end}}

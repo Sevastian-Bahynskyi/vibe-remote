@@ -110,6 +110,8 @@ type ConversationView struct {
 	ID              string
 	Title           string
 	Provider        string
+	Agent           string
+	AgentLabel      string
 	NativeID        string
 	State           string
 	Tone            Tone
@@ -120,6 +122,8 @@ type ConversationView struct {
 	SharedWorktree  bool
 	ResumeCommand   string
 	DesktopGuidance string
+	Model           string
+	Effort          string
 	IsClaude        bool
 	// ChatName is the session slot this checkpoint was captured under, for the
 	// screens that show a checkpoint outside its own group and would otherwise
@@ -135,10 +139,12 @@ type ConversationView struct {
 type ChatGroupView struct {
 	// ID addresses the group in a URL. It is the slot ID for a live chat and the
 	// unattributedChatID sentinel for the leftover group.
-	ID    string
-	Name  string
-	Meta  string
-	Count string
+	ID         string
+	Name       string
+	Meta       string
+	Count      string
+	Agent      string
+	AgentLabel string
 	// Ago is the age of the most recent checkpoint in the group, which is what
 	// makes the list scannable by recency.
 	Ago string
@@ -155,7 +161,10 @@ type ChatGroupDetailView struct {
 // unattributedChatID groups the checkpoints with no slot: everything captured
 // before slots were recorded, plus anything run outside one. It is a reserved
 // group address, and the "@" keeps it from colliding with a real slot ID.
-const unattributedChatID = "@earlier"
+const (
+	unattributedChatID = "@earlier"
+	codexChatPrefix    = "@codex:"
+)
 
 // ChoiceView is one option in a radio list. The dashboard uses radio lists
 // rather than <select> because a phone shows every option at once and takes one
@@ -511,13 +520,17 @@ func conversationState(session model.Session) (string, Tone) {
 func buildConversation(session model.Session, now time.Time) ConversationView {
 	status, tone := conversationState(session)
 	provider := "Codex"
+	agent := string(model.ProviderCodex)
 	if session.Provider == model.ProviderClaude {
 		provider = "Claude"
+		agent = string(model.ProviderClaude)
 	}
 	return ConversationView{
 		ID:              session.ID,
 		Title:           orDefault(truncate(session.Title, 80), "Untitled conversation"),
 		Provider:        provider,
+		Agent:           agent,
+		AgentLabel:      provider,
 		NativeID:        session.NativeSessionID,
 		State:           status,
 		Tone:            tone,
@@ -528,6 +541,8 @@ func buildConversation(session model.Session, now time.Time) ConversationView {
 		SharedWorktree:  session.SharedWorktree,
 		ResumeCommand:   session.ResumeCommand,
 		DesktopGuidance: session.DesktopGuidance,
+		Model:           session.Model,
+		Effort:          session.Effort,
 		IsClaude:        session.Provider == model.ProviderClaude,
 	}
 }
@@ -549,9 +564,11 @@ func buildChatGroups(state dashboardState, now time.Time) []ChatGroupView {
 
 	for _, session := range state.Sessions {
 		key := strings.TrimSpace(session.SlotID)
-		// No slot, or a slot deleted since: either way there is no chat name left
-		// to file this checkpoint under.
-		if _, live := slots[key]; !live {
+		if _, live := slots[key]; live {
+			// A live slot remains the primary grouping key.
+		} else if session.Provider == model.ProviderCodex {
+			key = codexChatPrefix + session.WorkspacePath
+		} else {
 			key = unattributedChatID
 		}
 		if _, seen := grouped[key]; !seen {
@@ -581,14 +598,27 @@ func buildChatGroups(state dashboardState, now time.Time) []ChatGroupView {
 			group.Live = true
 			group.Name = orDefault(remote.Name, "Unnamed session")
 			group.Meta = filepath.Base(remote.WorkspacePath)
+			group.Agent = string(model.ProviderClaude)
+			group.AgentLabel = "Claude"
+		} else if strings.HasPrefix(key, codexChatPrefix) {
+			path := strings.TrimPrefix(key, codexChatPrefix)
+			group.Name = "Codex · " + filepath.Base(path)
+			group.Meta = shortPath(path)
+			group.Agent = string(model.ProviderCodex)
+			group.AgentLabel = "Codex"
 		} else {
 			group.Name = "Earlier conversations"
 			group.Meta = "Not captured under a session"
+			group.Agent = string(model.ProviderClaude)
+			group.AgentLabel = "Claude"
 		}
 		groups = append(groups, group)
 	}
 
 	sort.SliceStable(groups, func(first, second int) bool {
+		if groups[first].ID == unattributedChatID || groups[second].ID == unattributedChatID {
+			return groups[second].ID == unattributedChatID && groups[first].ID != unattributedChatID
+		}
 		if groups[first].Live != groups[second].Live {
 			return groups[first].Live
 		}

@@ -1,3 +1,9 @@
 .DS_Store
 build/
 coverage.out
+.envrc
+.mcp.json
+.codex/
+/vibe-remote
+/output/
+/tmp/

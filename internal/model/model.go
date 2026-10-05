@@ -63,6 +63,8 @@ type Session struct {
 	State           SessionState `json:"state"`
 	Pinned          bool         `json:"pinned"`
 	LastPrompt      string       `json:"lastPrompt,omitempty"`
+	Model           string       `json:"model,omitempty"`
+	Effort          string       `json:"effort,omitempty"`
 	UpdatedAt       time.Time    `json:"updatedAt"`
 	ResumeCommand   string       `json:"resumeCommand,omitempty"`
 	DesktopGuidance string       `json:"desktopGuidance,omitempty"`
@@ -123,6 +125,8 @@ type RemoteSession struct {
 	WorkspaceID     string       `json:"workspaceId,omitempty"`
 	WorkspacePath   string       `json:"workspacePath"`
 	ResumeSessionID string       `json:"resumeSessionId,omitempty"`
+	Model           string       `json:"model,omitempty"`
+	Effort          string       `json:"effort,omitempty"`
 	Desired         string       `json:"desired"`
 	CreatedAt       time.Time    `json:"createdAt"`
 	UpdatedAt       time.Time    `json:"updatedAt"`
@@ -146,6 +150,29 @@ func ValidResumeSessionID(value string) bool {
 	for _, character := range value {
 		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
 			(character >= '0' && character <= '9') || character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func ValidEffortLevel(value string) bool {
+	switch value {
+	case "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidModelName(value string) bool {
+	if value == "" || len(value) > 128 || value[0] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' {
 			continue
 		}
 		return false

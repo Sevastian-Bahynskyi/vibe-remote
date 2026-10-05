@@ -30,6 +30,7 @@ const (
 	HookEventComplete     HookEventKind = "complete"
 	HookEventInterrupt    HookEventKind = "interrupt"
 	HookEventFailure      HookEventKind = "failure"
+	HookEventModelSwitch  HookEventKind = "model_switch"
 )
 
 type HookEvent struct {
@@ -44,6 +45,8 @@ type HookEvent struct {
 	Kind             HookEventKind
 	Prompt           string
 	AssistantMessage string
+	Model            string
+	Effort           string
 	Git              model.GitSnapshot
 	OccurredAt       time.Time
 }
@@ -65,6 +68,11 @@ type CreateHandoffParams struct {
 type HandoffClaim struct {
 	Handoff model.Handoff
 	Token   string
+}
+
+type AgentSettings struct {
+	Model  string
+	Effort string
 }
 
 type Options struct {
@@ -373,6 +381,12 @@ func (s *Store) UpsertRemoteSession(ctx context.Context, session model.RemoteSes
 	if strings.TrimSpace(session.AccountID) == "" {
 		return model.RemoteSession{}, errors.New("remote session account is required")
 	}
+	settings, err := validAgentSettings(AgentSettings{Model: session.Model, Effort: session.Effort})
+	if err != nil {
+		return model.RemoteSession{}, err
+	}
+	session.Model = settings.Model
+	session.Effort = settings.Effort
 	session.WorkspacePath = canonicalPath(strings.TrimSpace(session.WorkspacePath))
 	if session.WorkspacePath == "." || session.WorkspacePath == "" {
 		return model.RemoteSession{}, errors.New("remote session workspace is required")
@@ -388,19 +402,22 @@ func (s *Store) UpsertRemoteSession(ctx context.Context, session model.RemoteSes
 		session.CreatedAt = now
 	}
 	session.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO remote_sessions (id, name, account_id, workspace_id, workspace_path, resume_session_id, desired, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO remote_sessions (id, name, account_id, workspace_id, workspace_path, resume_session_id, model, effort, desired, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			account_id = excluded.account_id,
 			workspace_id = excluded.workspace_id,
 			workspace_path = excluded.workspace_path,
 			resume_session_id = excluded.resume_session_id,
+			model = excluded.model,
+			effort = excluded.effort,
 			desired = excluded.desired,
 			updated_at = excluded.updated_at`,
 		session.ID, strings.TrimSpace(session.Name), session.AccountID, session.WorkspaceID,
-		session.WorkspacePath, strings.TrimSpace(session.ResumeSessionID), session.Desired,
+		session.WorkspacePath, strings.TrimSpace(session.ResumeSessionID), strings.TrimSpace(session.Model),
+		strings.TrimSpace(session.Effort), session.Desired,
 		formatTime(session.CreatedAt), formatTime(session.UpdatedAt),
 	)
 	if err != nil {
@@ -482,6 +499,93 @@ func (s *Store) LinkRemoteSessionConversation(ctx context.Context, slotID, nativ
 		return fmt.Errorf("link remote session conversation: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) RecordAgentSettings(
+	ctx context.Context,
+	provider model.Provider,
+	nativeSessionID string,
+	settings AgentSettings,
+) error {
+	if provider != model.ProviderClaude && provider != model.ProviderCodex {
+		return errors.New("valid agent provider is required")
+	}
+	nativeSessionID = strings.TrimSpace(nativeSessionID)
+	if nativeSessionID == "" {
+		return errors.New("native session id is required")
+	}
+	settings, err := validAgentSettings(settings)
+	if err != nil {
+		return err
+	}
+	if settings.Model == "" && settings.Effort == "" {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO session_agents (provider, native_session_id, model, effort, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(provider, native_session_id) DO UPDATE SET
+			model = CASE WHEN excluded.model = '' THEN session_agents.model ELSE excluded.model END,
+			effort = CASE WHEN excluded.effort = '' THEN session_agents.effort ELSE excluded.effort END,
+			updated_at = excluded.updated_at`,
+		string(provider), nativeSessionID, settings.Model, settings.Effort, formatTime(s.now().UTC()),
+	)
+	if err != nil {
+		return fmt.Errorf("record agent settings: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetAgentSettings(
+	ctx context.Context,
+	provider model.Provider,
+	nativeSessionID string,
+) (AgentSettings, error) {
+	var settings AgentSettings
+	err := s.db.QueryRowContext(ctx, `
+		SELECT model, effort FROM session_agents
+		WHERE provider = ? AND native_session_id = ?`,
+		string(provider), strings.TrimSpace(nativeSessionID),
+	).Scan(&settings.Model, &settings.Effort)
+	if err != nil {
+		return AgentSettings{}, normalizeScanError("get agent settings", err)
+	}
+	return settings, nil
+}
+
+func (s *Store) SetRemoteSessionAgent(ctx context.Context, slotID string, settings AgentSettings) error {
+	settings, err := validAgentSettings(settings)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(slotID) == "" || (settings.Model == "" && settings.Effort == "") {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE remote_sessions SET
+			model = CASE WHEN ? = '' THEN model ELSE ? END,
+			effort = CASE WHEN ? = '' THEN effort ELSE ? END,
+			updated_at = ?
+		WHERE id = ?`,
+		settings.Model, settings.Model, settings.Effort, settings.Effort,
+		formatTime(s.now().UTC()), strings.TrimSpace(slotID),
+	)
+	if err != nil {
+		return fmt.Errorf("set remote session agent: %w", err)
+	}
+	return nil
+}
+
+func validAgentSettings(settings AgentSettings) (AgentSettings, error) {
+	settings.Model = strings.TrimSpace(settings.Model)
+	settings.Effort = strings.TrimSpace(settings.Effort)
+	if settings.Model != "" && !model.ValidModelName(settings.Model) {
+		return AgentSettings{}, errors.New("invalid model name")
+	}
+	if settings.Effort != "" && !model.ValidEffortLevel(settings.Effort) {
+		return AgentSettings{}, errors.New("invalid effort level")
+	}
+	return settings, nil
 }
 
 func (s *Store) DeleteRemoteSession(ctx context.Context, id string) error {
@@ -992,11 +1096,14 @@ func (s *Store) ListHandoffs(ctx context.Context, includeConsumed bool) ([]model
 
 const sessionSelect = `
 	SELECT id, provider, native_session_id, account_id, slot_id, title, workspace_path, worktree_path,
-		branch, head_sha, state, pinned, last_prompt, updated_at
+		branch, head_sha, state, pinned, last_prompt,
+		COALESCE((SELECT model FROM session_agents WHERE provider = sessions.provider AND native_session_id = sessions.native_session_id), ''),
+		COALESCE((SELECT effort FROM session_agents WHERE provider = sessions.provider AND native_session_id = sessions.native_session_id), ''),
+		updated_at
 	FROM sessions`
 
 const remoteSessionSelect = `
-	SELECT id, name, account_id, workspace_id, workspace_path, resume_session_id, desired, created_at, updated_at
+	SELECT id, name, account_id, workspace_id, workspace_path, resume_session_id, model, effort, desired, created_at, updated_at
 	FROM remote_sessions`
 
 type scanner interface {
@@ -1009,7 +1116,8 @@ func scanRemoteSession(row scanner) (model.RemoteSession, error) {
 	var updatedAt string
 	if err := row.Scan(
 		&session.ID, &session.Name, &session.AccountID, &session.WorkspaceID,
-		&session.WorkspacePath, &session.ResumeSessionID, &session.Desired, &createdAt, &updatedAt,
+		&session.WorkspacePath, &session.ResumeSessionID, &session.Model, &session.Effort,
+		&session.Desired, &createdAt, &updatedAt,
 	); err != nil {
 		return model.RemoteSession{}, normalizeScanError("scan remote session", err)
 	}
@@ -1071,7 +1179,7 @@ func scanSession(row scanner) (model.Session, error) {
 	if err := row.Scan(
 		&session.ID, &provider, &session.NativeSessionID, &session.AccountID, &session.SlotID, &session.Title,
 		&session.WorkspacePath, &session.WorktreePath, &session.Branch, &session.HeadSHA,
-		&state, &session.Pinned, &session.LastPrompt, &updatedAt,
+		&state, &session.Pinned, &session.LastPrompt, &session.Model, &session.Effort, &updatedAt,
 	); err != nil {
 		return model.Session{}, normalizeScanError("scan session", err)
 	}

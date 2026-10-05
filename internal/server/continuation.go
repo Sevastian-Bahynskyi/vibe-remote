@@ -37,6 +37,25 @@ func (s *Server) continueClaude(ctx context.Context, source model.Session, accou
 		if s.claude.Status(slotID).Running {
 			return handoff, "Claude", nil
 		}
+		settings, settingsErr := s.store.GetAgentSettings(ctx, source.Provider, source.NativeSessionID)
+		if settingsErr != nil && !errors.Is(settingsErr, store.ErrNotFound) {
+			return failure("Could not read the source agent settings.")
+		}
+		changed := false
+		if remote.Model == "" && settings.Model != "" {
+			remote.Model = settings.Model
+			changed = true
+		}
+		if remote.Effort == "" && settings.Effort != "" {
+			remote.Effort = settings.Effort
+			changed = true
+		}
+		if changed {
+			remote, err = s.store.UpsertRemoteSession(ctx, remote)
+			if err != nil {
+				return failure("Could not update the continuation session.")
+			}
+		}
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		name := source.Title
@@ -67,6 +86,11 @@ func (s *Server) continueClaude(ctx context.Context, source model.Session, accou
 				return failure("Could not prepare the destination workspace.")
 			}
 		}
+		name = uniqueSessionName(truncate(name, 60), account.Email, workspace, remotes, slotID)
+		settings, settingsErr := s.store.GetAgentSettings(ctx, source.Provider, source.NativeSessionID)
+		if settingsErr != nil && !errors.Is(settingsErr, store.ErrNotFound) {
+			return failure("Could not read the source agent settings.")
+		}
 		liveGit, err := checkpoint.NewGitCapturer().Capture(ctx, source.WorkspacePath)
 		if err != nil {
 			liveGit = model.GitSnapshot{}
@@ -79,7 +103,8 @@ func (s *Server) continueClaude(ctx context.Context, source model.Session, accou
 			return failure("Could not save the continuation checkpoint.")
 		}
 		remote, err = s.store.UpsertRemoteSession(ctx, model.RemoteSession{ID: slotID, Name: name, AccountID: account.ID,
-			WorkspaceID: workspace.ID, WorkspacePath: workspace.Path, Desired: model.DesiredStopped})
+			WorkspaceID: workspace.ID, WorkspacePath: workspace.Path, Model: settings.Model, Effort: settings.Effort,
+			Desired: model.DesiredStopped})
 		if err != nil {
 			_ = checkpoint.RemoveContinuation(s.layout.Root, slotID)
 			return failure("Could not create the continuation session.")
@@ -99,5 +124,5 @@ func handoffInstructions(provider model.Provider, destination string) string {
 	if provider == model.ProviderClaude {
 		return "Continuation started with the checkpoint attached. Open the destination session to follow its progress."
 	}
-	return "Ready for 48 hours. Open " + destination + " in this workspace and type continue."
+	return "Ready for 48 hours. Open " + destination + " in this workspace and ask it to continue."
 }

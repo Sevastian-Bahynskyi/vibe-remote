@@ -24,6 +24,8 @@ const (
 
 type Repository interface {
 	RecordHookEvent(context.Context, store.HookEvent) (model.Session, model.Turn, error)
+	RecordAgentSettings(context.Context, model.Provider, string, store.AgentSettings) error
+	SetRemoteSessionAgent(context.Context, string, store.AgentSettings) error
 	LinkRemoteSessionConversation(context.Context, string, string) error
 	FindHandoff(context.Context, model.Provider, string, string) (model.Handoff, error)
 	ClaimHandoffByID(context.Context, string) (store.HandoffClaim, error)
@@ -119,6 +121,17 @@ func (s *Service) HandleStdin(
 	// slot row holds only the one conversation it is talking in now, so it is
 	// the checkpoint that has to remember which chat it belonged to.
 	event.SlotID = origin.SlotID
+	if event.Model != "" || event.Effort != "" {
+		settings := store.AgentSettings{Model: event.Model, Effort: event.Effort}
+		if err := s.repository.RecordAgentSettings(ctx, provider, event.NativeSessionID, settings); err != nil {
+			return HookResponse{}, fmt.Errorf("record agent settings: %w", err)
+		}
+		if origin.SlotID != "" {
+			if err := s.repository.SetRemoteSessionAgent(ctx, origin.SlotID, settings); err != nil {
+				return HookResponse{}, fmt.Errorf("record slot agent settings: %w", err)
+			}
+		}
+	}
 	// Link before recording: the conversation is the slot's regardless of
 	// whether this particular checkpoint lands, and linking first keeps a
 	// handoff claim from being stranded by a later failure.
@@ -127,7 +140,7 @@ func (s *Service) HandleStdin(
 			return HookResponse{}, err
 		}
 	}
-	if event.Kind == store.HookEventSessionStart {
+	if event.Kind == store.HookEventSessionStart || event.Kind == store.HookEventModelSwitch {
 		return HookResponse{Ignored: true}, nil
 	}
 	if provider == model.ProviderClaude && origin.SlotID != "" && origin.Continuation != "" && event.Kind == store.HookEventPrompt && event.Prompt == ContinuationPrompt {
@@ -165,7 +178,7 @@ func (s *Service) recordAndMaybeContinue(ctx context.Context, event store.HookEv
 	if err != nil {
 		return HookResponse{}, err
 	}
-	if event.Kind != store.HookEventPrompt || strings.TrimSpace(event.Prompt) != "continue" {
+	if event.Kind != store.HookEventPrompt || !IsContinueRequest(event.Prompt) {
 		return response, nil
 	}
 

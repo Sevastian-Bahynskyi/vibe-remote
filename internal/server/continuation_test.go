@@ -57,6 +57,11 @@ func TestAccountContinuationCreatesNamedSlotAndRetriesSafely(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := db.RecordAgentSettings(ctx, model.ProviderClaude, source.NativeSessionID, store.AgentSettings{
+				Model: "claude-opus-4-1", Effort: "high",
+			}); err != nil {
+				t.Fatal(err)
+			}
 			_, err = db.UpsertRemoteSession(ctx, model.RemoteSession{ID: "original", Name: "Thinga", AccountID: sourceAccount,
 				WorkspacePath: workspace, ResumeSessionID: source.NativeSessionID, Desired: model.DesiredStopped})
 			if err != nil {
@@ -72,6 +77,25 @@ func TestAccountContinuationCreatesNamedSlotAndRetriesSafely(t *testing.T) {
 				if err == nil {
 					t.Fatal("startup failure hidden")
 				}
+				remotes, loadErr := db.ListRemoteSessions(ctx)
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				var created model.RemoteSession
+				for _, candidate := range remotes {
+					if candidate.AccountID == destinationAccount {
+						created = candidate
+						break
+					}
+				}
+				if created.ID == "" {
+					t.Fatal("failed start did not retain the destination slot")
+				}
+				created.Model = ""
+				created.Effort = ""
+				if _, updateErr := db.UpsertRemoteSession(ctx, created); updateErr != nil {
+					t.Fatal(updateErr)
+				}
 				runner.fail = false
 				handoff, _, err = s.createHandoffOp(ctx, source.ID, model.ProviderClaude, destinationAccount)
 			}
@@ -79,8 +103,11 @@ func TestAccountContinuationCreatesNamedSlotAndRetriesSafely(t *testing.T) {
 				t.Fatal(err)
 			}
 			remote, err := db.GetRemoteSession(ctx, handoff.ID)
-			if err != nil || remote.Name != "Thinga" || remote.AccountID != destinationAccount || remote.WorkspacePath != source.WorkspacePath {
+			if err != nil || remote.Name != "Thinga (2)" || remote.AccountID != destinationAccount || remote.WorkspacePath != source.WorkspacePath {
 				t.Fatal("wrong destination", remote, err)
+			}
+			if remote.Model != "claude-opus-4-1" || remote.Effort != "high" {
+				t.Fatal("agent settings were not carried", remote)
 			}
 			text, err := checkpoint.LoadContinuation(s.layout.Root, remote.ID)
 			if err != nil || !strings.Contains(text, "Finish the unfinished feature") {
@@ -89,6 +116,10 @@ func TestAccountContinuationCreatesNamedSlotAndRetriesSafely(t *testing.T) {
 			command := runner.commands[len(runner.commands)-1]
 			if command.Args[len(command.Args)-1] != checkpoint.ContinuationPrompt {
 				t.Fatal("automatic prompt missing")
+			}
+			args := strings.Join(command.Args, " ")
+			if !strings.Contains(args, "--model claude-opus-4-1") || !strings.Contains(args, "--effort high") {
+				t.Fatal("agent flags missing", args)
 			}
 			if strings.Contains(strings.Join(command.Args, " "), "unfinished feature") {
 				t.Fatal("checkpoint exposed in process arguments")
@@ -116,5 +147,42 @@ func TestAccountContinuationCreatesNamedSlotAndRetriesSafely(t *testing.T) {
 				t.Fatal("reused a destination that was moved to another account")
 			}
 		})
+	}
+}
+
+func TestCodexContinuationCarriesNoAgentSettings(t *testing.T) {
+	const destinationAccount = "22345678-1234-4123-8123-123456789abc"
+	runner := &continuationRunner{}
+	s, db := newTestServerWithStore(t, runner)
+	ctx := context.Background()
+	workspace := t.TempDir()
+	if _, err := db.UpsertAccount(ctx, model.Account{ID: destinationAccount, Email: "destination@example.com",
+		Status: model.AccountAuthenticated, ProfileDir: filepath.Join(s.layout.Profiles, destinationAccount)}); err != nil {
+		t.Fatal(err)
+	}
+	source, _, err := db.RecordHookEvent(ctx, store.HookEvent{
+		Provider: model.ProviderCodex, NativeSessionID: "codex-source", WorkspacePath: workspace,
+		Kind: store.HookEventPrompt, Prompt: strings.Repeat("continue this long title ", 6),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, _, err := s.createHandoffOp(ctx, source.ID, model.ProviderClaude, destinationAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := db.GetRemoteSession(ctx, handoff.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Model != "" || remote.Effort != "" {
+		t.Fatalf("Codex source carried settings: %#v", remote)
+	}
+	if len([]rune(remote.Name)) > 60 {
+		t.Fatalf("destination name was not truncated: %q", remote.Name)
+	}
+	args := strings.Join(runner.commands[len(runner.commands)-1].Args, " ")
+	if strings.Contains(args, "--model") || strings.Contains(args, "--effort") {
+		t.Fatalf("empty settings reached argv: %q", args)
 	}
 }

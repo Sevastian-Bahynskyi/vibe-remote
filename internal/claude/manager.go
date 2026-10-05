@@ -78,6 +78,8 @@ type WorkerSpec struct {
 	Workspace       string
 	Name            string
 	ResumeSessionID string
+	Model           string
+	Effort          string
 	Force           bool
 }
 
@@ -87,6 +89,8 @@ type worker struct {
 	workspace string
 	name      string
 	resume    string
+	model     string
+	effort    string
 	ctx       context.Context
 	cancel    context.CancelFunc
 	process   Process
@@ -213,6 +217,10 @@ func (m *Manager) Add(ctx context.Context, email string) (model.Account, error) 
 	}
 	if err := os.Mkdir(profileDir, 0o700); err != nil {
 		return model.Account{}, fmt.Errorf("create Claude profile: %w", err)
+	}
+	if err := provisionOutputStyle(profileDir); err != nil {
+		_ = os.RemoveAll(profileDir)
+		return model.Account{}, err
 	}
 	now := m.now().UTC()
 	account := model.Account{
@@ -356,6 +364,14 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 	if err != nil {
 		return err
 	}
+	modelName := strings.TrimSpace(spec.Model)
+	if modelName != "" && !model.ValidModelName(modelName) {
+		return errors.New("invalid Claude model name")
+	}
+	effort := strings.TrimSpace(spec.Effort)
+	if effort != "" && !model.ValidEffortLevel(effort) {
+		return errors.New("invalid Claude effort level")
+	}
 	name := strings.TrimSpace(spec.Name)
 	if name == "" {
 		name = "Claude remote"
@@ -386,6 +402,7 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 	workerContext, cancel := context.WithCancel(context.Background())
 	w := &worker{
 		id: spec.ID, account: account, workspace: workspace, name: name, resume: resume,
+		model: modelName, effort: effort,
 		ctx: workerContext, cancel: cancel, done: make(chan struct{}),
 	}
 	w.state = model.WorkerStatus{
@@ -592,6 +609,7 @@ func (m *Manager) Close(ctx context.Context) error {
 
 func (m *Manager) start(w *worker) (Process, error) {
 	resume := m.storedResume(w)
+	modelName, effort := m.storedAgent(w)
 	continuation, err := checkpoint.LoadContinuation(filepath.Dir(m.profilesRoot), w.id)
 	if err != nil {
 		return nil, errors.New("could not load continuation checkpoint")
@@ -603,7 +621,15 @@ func (m *Manager) start(w *worker) (Process, error) {
 		return nil, context.Canceled
 	}
 	w.resume = resume
-	arguments := []string{"--dangerously-skip-permissions", "--chrome", "--verbose"}
+	w.model = modelName
+	w.effort = effort
+	arguments := []string{"--permission-mode", "auto", "--chrome", "--verbose"}
+	if modelName != "" {
+		arguments = append(arguments, "--model", modelName)
+	}
+	if effort != "" {
+		arguments = append(arguments, "--effort", effort)
+	}
 	if resume != "" {
 		arguments = append(arguments, "--resume", resume)
 	}
@@ -652,6 +678,24 @@ func (m *Manager) storedResume(w *worker) string {
 		return w.resume
 	}
 	return resume
+}
+
+func (m *Manager) storedAgent(w *worker) (string, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stored, err := m.store.GetRemoteSession(ctx, w.id)
+	if err != nil {
+		return w.model, w.effort
+	}
+	modelName := strings.TrimSpace(stored.Model)
+	if !model.ValidModelName(modelName) {
+		modelName = w.model
+	}
+	effort := strings.TrimSpace(stored.Effort)
+	if !model.ValidEffortLevel(effort) {
+		effort = w.effort
+	}
+	return modelName, effort
 }
 
 func (m *Manager) supervise(w *worker, process Process) {
@@ -853,12 +897,13 @@ func (m *Manager) profileEnv(account model.Account) []string {
 	)
 }
 
-// workerEnv adds the slot identity to the profile environment. Hooks inherit it
-// from the Claude process, which is the only signal that distinguishes two slots
-// sharing one account and workspace: their conversations are otherwise
-// indistinguishable, and picking the most recent would attach the wrong one.
+// workerEnv adds the slot identity to the profile environment, then layers on
+// whatever the workspace's own .envrc computes (see direnvEnv) so per-project
+// MCP servers configured against a direnv-exported token resolve the same way
+// they would in an interactive shell that had cd'd there.
 func (m *Manager) workerEnv(w *worker) []string {
-	return append(m.profileEnv(w.account), "VIBE_REMOTE_SLOT_ID="+w.id)
+	environment := append(m.profileEnv(w.account), "VIBE_REMOTE_SLOT_ID="+w.id)
+	return mergeEnv(environment, direnvEnv(w.workspace))
 }
 
 func (m *Manager) recordAccountError(ctx context.Context, account model.Account, message string, cause error) (model.Account, error) {
