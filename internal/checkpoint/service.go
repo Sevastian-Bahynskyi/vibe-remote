@@ -23,6 +23,7 @@ const (
 )
 
 type Repository interface {
+	RecordWorkerActivity(context.Context, store.ActivityEvent) error
 	RecordHookEvent(context.Context, store.HookEvent) (model.Session, model.Turn, error)
 	RecordAgentSettings(context.Context, model.Provider, string, store.AgentSettings) error
 	SetRemoteSessionAgent(context.Context, string, store.AgentSettings) error
@@ -94,9 +95,10 @@ func NewService(repository Repository, git GitCapturer) *Service {
 // attributes the checkpoint; the slot, present only for a worker this service
 // started, says which Remote Control session the conversation belongs to.
 type HookOrigin struct {
-	AccountID    string
-	SlotID       string
-	Continuation string
+	ActivityRunID string
+	AccountID     string
+	SlotID        string
+	Continuation  string
 }
 
 func (s *Service) HandleStdin(
@@ -108,6 +110,15 @@ func (s *Service) HandleStdin(
 	payload, err := io.ReadAll(io.LimitReader(reader, 4*1024*1024))
 	if err != nil {
 		return HookResponse{}, fmt.Errorf("read hook input: %w", err)
+	}
+	if provider == model.ProviderClaude {
+		onlyActivity, err := s.observeActivity(ctx, origin, payload)
+		if err != nil {
+			return HookResponse{}, err
+		}
+		if onlyActivity {
+			return HookResponse{Ignored: true}, nil
+		}
 	}
 	event, err := ParseHookEvent(provider, payload)
 	if err != nil {

@@ -590,7 +590,7 @@ func TestMigrationSevenUpgradesVersionSixDatabase(t *testing.T) {
 	database := openTestStore(t, path, time.Now)
 	defer database.Close()
 	var version int
-	if err := database.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+	if err := database.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	for _, column := range []string{"model", "effort"} {

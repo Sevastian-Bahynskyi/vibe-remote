@@ -323,6 +323,15 @@ func (s *Server) uiFragmentSession(response http.ResponseWriter, request *http.R
 	s.renderFragment(response, http.StatusOK, "session-detail", detail)
 }
 
+func (s *Server) uiFragmentActivity(response http.ResponseWriter, request *http.Request) {
+	detail, err := s.sessionDetail(request.Context(), request.PathValue("id"), isLocalRequest(request), nil)
+	if err != nil {
+		s.renderFragment(response, statusOf(err), "notice-oob", noticeFor(err))
+		return
+	}
+	s.renderFragment(response, http.StatusOK, "session-activity", detail.Session)
+}
+
 // uiFragmentConversationOptions repopulates the conversation choices when the
 // account or workspace selection changes, because a conversation belongs to the
 // account and workspace it started in.

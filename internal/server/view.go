@@ -35,6 +35,8 @@ const (
 
 // SessionView is one live Remote Control slot as the dashboard shows it.
 type SessionView struct {
+	ActivityLines     []string
+	ActivityHelp      string
 	ID                string
 	Name              string
 	AccountID         string
@@ -81,7 +83,7 @@ const (
 
 func refreshCadence(sessions []SessionView) int {
 	for _, session := range sessions {
-		if session.Tone == ToneBusy {
+		if session.Tone == ToneBusy || len(session.ActivityLines) > 0 {
 			return transitionalRefreshM
 		}
 	}
@@ -380,7 +382,35 @@ func buildSessionWith(
 		view.RemoteURL = worker.RemoteURL
 	}
 	view.CanOpenDesktop = canOpenDesktop(worker, state.OnThisMac, state.Health.ClaudeDesktop)
+	if worker.Running && worker.State == "running" {
+		if len(worker.Activity.Tools) > 0 {
+			view.Status, view.Tone = "Working", ToneBusy
+		}
+		for _, item := range worker.Activity.Tools {
+			elapsed := time.Since(item.StartedAt)
+			view.ActivityLines = append(view.ActivityLines, item.Name+" · "+activityElapsed(elapsed))
+			if elapsed >= 2*time.Minute {
+				view.Status, view.Tone = "Taking longer", ToneWarn
+				view.ActivityHelp = "Open this session in Claude to check the pending call. Before retrying a database write, verify whether it took effect."
+			}
+		}
+		for _, item := range worker.Activity.Confirmations {
+			view.ActivityLines = append(view.ActivityLines, item.Name+" confirmation · "+activityElapsed(time.Since(item.StartedAt)))
+		}
+		if len(worker.Activity.Confirmations) > 0 {
+			view.Status, view.Tone = "Waiting for confirmation", ToneWarn
+			view.ActivityHelp = "Open this session in Claude to respond. If no dialog appears, stop the session before resuming the conversation locally with the same account. Verify database state before retrying an interrupted write."
+		}
+	}
 	return view
+}
+
+func activityElapsed(elapsed time.Duration) string {
+	seconds := max(0, int(elapsed.Seconds()))
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	return fmt.Sprintf("%dm %02ds", seconds/60, seconds%60)
 }
 
 func conversationLabel(nativeID string, titles map[string]string) string {

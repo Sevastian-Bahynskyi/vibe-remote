@@ -171,6 +171,29 @@ var migrations = []migration{
 			`ALTER TABLE remote_sessions ADD COLUMN effort TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		version: 8,
+		statements: []string{
+			`CREATE TABLE worker_activity_runs (
+				slot_id TEXT PRIMARY KEY REFERENCES remote_sessions(id) ON DELETE CASCADE,
+				run_id TEXT NOT NULL,
+				session_id TEXT NOT NULL DEFAULT '',
+				accepting INTEGER NOT NULL DEFAULT 1,
+				closed INTEGER NOT NULL DEFAULT 0
+			)`,
+			`CREATE TABLE worker_activity_items (
+				slot_id TEXT NOT NULL REFERENCES worker_activity_runs(slot_id) ON DELETE CASCADE,
+				kind TEXT NOT NULL,
+				request_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				parent_tool_id TEXT NOT NULL DEFAULT '',
+				anonymous INTEGER NOT NULL DEFAULT 0,
+				started_at TEXT NOT NULL,
+				finished INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (slot_id, kind, request_id)
+			)`,
+		},
+	},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

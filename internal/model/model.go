@@ -104,15 +104,17 @@ type GitSnapshot struct {
 }
 
 type WorkerStatus struct {
-	ID            string `json:"id,omitempty"`
-	Name          string `json:"name,omitempty"`
-	AccountID     string `json:"accountId,omitempty"`
-	WorkspacePath string `json:"workspacePath,omitempty"`
-	Running       bool   `json:"running"`
-	PID           int    `json:"pid,omitempty"`
-	State         string `json:"state"`
-	RemoteURL     string `json:"remoteUrl,omitempty"`
-	LastError     string `json:"lastError,omitempty"`
+	ActivityRunID string         `json:"-"`
+	Activity      WorkerActivity `json:"activity"`
+	ID            string         `json:"id,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	AccountID     string         `json:"accountId,omitempty"`
+	WorkspacePath string         `json:"workspacePath,omitempty"`
+	Running       bool           `json:"running"`
+	PID           int            `json:"pid,omitempty"`
+	State         string         `json:"state"`
+	RemoteURL     string         `json:"remoteUrl,omitempty"`
+	LastError     string         `json:"lastError,omitempty"`
 }
 
 // RemoteSession is one Claude Remote Control session slot. Several may exist at

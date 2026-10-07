@@ -108,6 +108,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("GET /ui/fragments/sessions", server.uiFragmentSessions)
 	mux.HandleFunc("GET /ui/fragments/alerts", server.uiFragmentAlerts)
 	mux.HandleFunc("GET /ui/fragments/session/{id}", server.uiFragmentSession)
+	mux.HandleFunc("GET /ui/fragments/activity/{id}", server.uiFragmentActivity)
 	mux.HandleFunc("GET /ui/fragments/conversation-options", server.uiFragmentConversationOptions)
 
 	mux.HandleFunc("POST /ui/sessions", server.uiCreateSession)
@@ -289,14 +290,22 @@ func (s *Server) state(response http.ResponseWriter, request *http.Request) {
 }
 
 // decorateRemoteSessions attaches live worker state to each stored slot.
-func (s *Server) decorateRemoteSessions(remotes []model.RemoteSession) {
+func (s *Server) decorateRemoteSessions(ctx context.Context, remotes []model.RemoteSession) error {
 	for index := range remotes {
 		remote := &remotes[index]
 		remote.Worker = s.claude.Status(remote.ID)
+		if remote.Worker.Running && remote.Worker.State == "running" {
+			activity, err := s.store.WorkerActivity(ctx, remote.ID, remote.Worker.ActivityRunID)
+			if err != nil {
+				return err
+			}
+			remote.Worker.Activity = activity
+		}
 		if remote.Worker.Name == "" {
 			remote.Worker.Name = remote.Name
 		}
 	}
+	return nil
 }
 
 // decorateAccountActivity reports an account as active when at least one of its

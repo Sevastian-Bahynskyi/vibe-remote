@@ -23,6 +23,7 @@
     <span class="card-text">
       <span class="card-name">{{.Name}}</span>
       <span class="card-meta">{{.AccountEmail}} · {{.WorkspaceLabel}}</span>
+	  {{range .ActivityLines}}<span class="card-meta">{{.}}</span>{{end}}
     </span>
     <span class="card-status" data-tone="{{.Tone}}">{{.Status}}</span>
   </a>
@@ -43,13 +44,7 @@
 {{define "session-detail"}}
 <section id="session-detail" class="detail">
   {{with .Session}}
-  <div class="detail-head">
-    <span class="dot dot-large" data-tone="{{.Tone}}" aria-hidden="true"></span>
-    <div>
-      <h2>{{.Name}}</h2>
-      <p class="detail-status" data-tone="{{.Tone}}">{{.Status}}</p>
-    </div>
-  </div>
+  {{template "session-activity" .}}
 
   {{if .LastError}}<p class="detail-error">{{.LastError}}</p>{{end}}
 
@@ -98,6 +93,20 @@
     {{end}}
   {{end}}
 </section>
+{{end}}
+
+{{define "session-activity"}}
+<div id="session-activity-{{.ID}}" data-refresh="ui/fragments/activity/{{.ID}}" data-refresh-every="2000">
+  <div class="detail-head">
+    <span class="dot dot-large" data-tone="{{.Tone}}" aria-hidden="true"></span>
+    <div>
+      <h2>{{.Name}}</h2>
+      <p class="detail-status" data-tone="{{.Tone}}">{{.Status}}</p>
+    </div>
+  </div>
+  {{range .ActivityLines}}<p class="mono">{{.}}</p>{{end}}
+  {{if .ActivityHelp}}<p>{{.ActivityHelp}}</p>{{end}}
+</div>
 {{end}}
 
 {{define "confirm"}}

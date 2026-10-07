@@ -216,8 +216,9 @@ func runHook(layout paths.Layout, arguments []string) error {
 	// the account attributes the checkpoint, and the slot binds the conversation
 	// to the Remote Control session it belongs to.
 	origin := checkpoint.HookOrigin{
-		AccountID: os.Getenv("VIBE_REMOTE_ACCOUNT_ID"),
-		SlotID:    os.Getenv("VIBE_REMOTE_SLOT_ID"),
+		ActivityRunID: os.Getenv("VIBE_REMOTE_ACTIVITY_RUN_ID"),
+		AccountID:     os.Getenv("VIBE_REMOTE_ACCOUNT_ID"),
+		SlotID:        os.Getenv("VIBE_REMOTE_SLOT_ID"),
 	}
 	if provider == model.ProviderClaude && origin.SlotID != "" {
 		origin.Continuation, err = checkpoint.LoadContinuation(layout.Root, origin.SlotID)

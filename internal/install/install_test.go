@@ -147,6 +147,11 @@ func TestInstallClaudeHooksIsIdempotentAndRepairsOwnedHandler(t *testing.T) {
 		t.Fatal("unrelated Claude setting was not preserved")
 	}
 	hooks := updated["hooks"].(map[string]any)
+	for _, event := range []string{"SessionEnd", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionDenied", "Elicitation", "ElicitationResult"} {
+		if _, ok := hooks[event].([]any); !ok {
+			t.Fatalf("%s observer hook was not installed", event)
+		}
+	}
 	if _, ok := hooks["SessionStart"].([]any); !ok {
 		t.Fatal("SessionStart hook was not installed")
 	}

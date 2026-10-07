@@ -49,7 +49,9 @@ func (s *Server) slotsSnapshot(ctx context.Context) (dashboardState, error) {
 	if err != nil {
 		return dashboardState{}, err
 	}
-	s.decorateRemoteSessions(remotes)
+	if err := s.decorateRemoteSessions(ctx, remotes); err != nil {
+		return dashboardState{}, err
+	}
 	decorateAccountActivity(accounts, remotes)
 	return dashboardState{
 		Accounts:           accounts,

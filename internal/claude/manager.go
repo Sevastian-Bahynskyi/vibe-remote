@@ -29,6 +29,8 @@ var (
 // Store is the account persistence required by Manager. Implementations can
 // adapt a broader application store without coupling this package to it.
 type Store interface {
+	BeginWorkerActivity(context.Context, string, string) error
+	EndWorkerActivity(context.Context, string, string) error
 	UpsertAccount(context.Context, model.Account) (model.Account, error)
 	GetAccount(context.Context, string) (model.Account, error)
 	ListAccounts(context.Context) ([]model.Account, error)
@@ -84,19 +86,20 @@ type WorkerSpec struct {
 }
 
 type worker struct {
-	id        string
-	account   model.Account
-	workspace string
-	name      string
-	resume    string
-	model     string
-	effort    string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	process   Process
-	done      chan struct{}
-	startedAt time.Time
-	state     model.WorkerStatus
+	activityRunID string
+	id            string
+	account       model.Account
+	workspace     string
+	name          string
+	resume        string
+	model         string
+	effort        string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	process       Process
+	done          chan struct{}
+	startedAt     time.Time
+	state         model.WorkerStatus
 }
 
 // live reports whether this worker is serving Remote Control or is on its way
@@ -502,6 +505,7 @@ func (m *Manager) stopLocked(ctx context.Context, slotID string, force bool) err
 	w.state.Running = process != nil
 	w.state.State = "stopping"
 	m.mu.Unlock()
+	_ = m.store.EndWorkerActivity(ctx, slotID, w.activityRunID)
 
 	if process != nil {
 		if err := process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) && !force {
@@ -623,6 +627,16 @@ func (m *Manager) start(w *worker) (Process, error) {
 	w.resume = resume
 	w.model = modelName
 	w.effort = effort
+	runID, err := newID()
+	if err != nil {
+		return nil, err
+	}
+	activityContext, cancel := context.WithTimeout(w.ctx, 2*time.Second)
+	defer cancel()
+	if err := m.store.BeginWorkerActivity(activityContext, w.id, runID); err != nil {
+		return nil, err
+	}
+	w.activityRunID = runID
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve shared Claude settings: %w", err)
@@ -660,7 +674,8 @@ func (m *Manager) start(w *worker) (Process, error) {
 	}
 	w.startedAt = m.now()
 	w.state = model.WorkerStatus{
-		ID: w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
+		ActivityRunID: runID,
+		ID:            w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
 		PID: process.PID(), State: "connecting",
 	}
 	return process, nil
@@ -800,7 +815,8 @@ func (m *Manager) markRunning(w *worker, process Process) {
 	defer m.mu.Unlock()
 	if m.workers[w.id] == w && w.process == process {
 		w.state = model.WorkerStatus{
-			ID: w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
+			ActivityRunID: w.activityRunID,
+			ID:            w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
 			Running: true, PID: process.PID(), State: "running",
 			RemoteURL: remoteControlURLForProcess(w.account.ProfileDir, process.PID(), process.RemoteURL()),
 		}
@@ -910,8 +926,8 @@ func (m *Manager) profileEnv(account model.Account) []string {
 // MCP servers configured against a direnv-exported token resolve the same way
 // they would in an interactive shell that had cd'd there.
 func (m *Manager) workerEnv(w *worker) []string {
-	environment := append(m.profileEnv(w.account), "VIBE_REMOTE_SLOT_ID="+w.id)
-	return mergeEnv(environment, direnvEnv(w.workspace))
+	environment := mergeEnv(m.profileEnv(w.account), direnvEnv(w.workspace))
+	return mergeEnv(environment, []string{"VIBE_REMOTE_ACCOUNT_ID=" + w.account.ID, "VIBE_REMOTE_SLOT_ID=" + w.id, "VIBE_REMOTE_ACTIVITY_RUN_ID=" + w.activityRunID})
 }
 
 func (m *Manager) recordAccountError(ctx context.Context, account model.Account, message string, cause error) (model.Account, error) {
@@ -1136,7 +1152,7 @@ func filteredEnvironment(input []string) []string {
 		"ANTHROPIC_API_KEY": {}, "ANTHROPIC_AUTH_TOKEN": {}, "ANTHROPIC_BASE_URL": {},
 		"CLAUDE_CODE_OAUTH_TOKEN": {}, "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": {}, "CLAUDE_CODE_OAUTH_SCOPES": {},
 		"CLAUDE_CODE_USE_BEDROCK": {}, "CLAUDE_CODE_USE_VERTEX": {}, "CLAUDE_CODE_USE_FOUNDRY": {},
-		"CLAUDE_CONFIG_DIR": {}, "VIBE_REMOTE_ACCOUNT_ID": {}, "VIBE_REMOTE_SLOT_ID": {},
+		"CLAUDE_CONFIG_DIR": {}, "VIBE_REMOTE_ACCOUNT_ID": {}, "VIBE_REMOTE_SLOT_ID": {}, "VIBE_REMOTE_ACTIVITY_RUN_ID": {},
 	}
 	result := make([]string, 0, len(input))
 	for _, item := range input {

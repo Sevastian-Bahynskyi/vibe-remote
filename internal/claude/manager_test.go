@@ -709,6 +709,24 @@ func TestFilteredEnvironmentRemovesCredentialOverrides(t *testing.T) {
 	}
 }
 
+func TestForcedStopWorksWhenActivityStorageFails(t *testing.T) {
+	store := newFakeStore()
+	store.activityError = errors.New("activity storage unavailable")
+	process := newFakeProcess(101, false, true)
+	runner := &fakeRunner{outputs: [][]byte{[]byte(`{"loggedIn":true,"email":"person@example.com"}`)}, processes: []Process{process}}
+	manager := newTestManager(t, store, runner)
+	account := addStoredAccount(t, manager, store)
+	if err := manager.Activate(context.Background(), WorkerSpec{ID: "slot-a", AccountID: account.ID, Workspace: t.TempDir(), Name: "Project"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Deactivate(context.Background(), "slot-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if status := manager.Status("slot-a"); status.Running || status.State != "stopped" {
+		t.Fatalf("worker survived forced stop: %+v", status)
+	}
+}
+
 // waitForRunning blocks until a slot reports itself running. Activate hands the
 // slot off to a background settle rather than waiting for Claude to register, so
 // "is it running?" is a question with an answer a moment later, not on return.
@@ -789,10 +807,14 @@ func waitUntil(t *testing.T, timeout time.Duration, condition func() bool) {
 }
 
 type fakeStore struct {
-	mu       sync.Mutex
-	accounts map[string]model.Account
-	slots    map[string]model.RemoteSession
+	activityError error
+	mu            sync.Mutex
+	accounts      map[string]model.Account
+	slots         map[string]model.RemoteSession
 }
+
+func (s *fakeStore) BeginWorkerActivity(context.Context, string, string) error { return nil }
+func (s *fakeStore) EndWorkerActivity(context.Context, string, string) error   { return s.activityError }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
