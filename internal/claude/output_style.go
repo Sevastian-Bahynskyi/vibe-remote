@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +43,21 @@ func provisionOutputStyle(profileDir string) error {
 	if err := os.WriteFile(filepath.Join(stylesDir, "Codex.md"), []byte(codexOutputStyle), 0o600); err != nil {
 		return fmt.Errorf("write Codex output style: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte(`{"outputStyle":"Codex"}`), 0o600); err != nil {
+	settingsPath := filepath.Join(profileDir, "settings.json")
+	settings := map[string]json.RawMessage{}
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil || settings == nil {
+			return errors.New("Claude settings are malformed")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read Claude settings: %w", err)
+	}
+	settings["outputStyle"] = json.RawMessage(`"Codex"`)
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("encode Claude settings: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
 		return fmt.Errorf("write Claude settings: %w", err)
 	}
 	return nil

@@ -623,6 +623,14 @@ func (m *Manager) start(w *worker) (Process, error) {
 	w.resume = resume
 	w.model = modelName
 	w.effort = effort
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve shared Claude settings: %w", err)
+	}
+	permissionsPath := filepath.Join(m.workerPIDDir, w.id+".permissions.json")
+	if err := provisionPermissions(filepath.Join(home, ".claude", "settings.json"), permissionsPath); err != nil {
+		return nil, err
+	}
 	arguments := []string{"--permission-mode", "auto", "--chrome", "--verbose"}
 	if modelName != "" {
 		arguments = append(arguments, "--model", modelName)
@@ -633,7 +641,7 @@ func (m *Manager) start(w *worker) (Process, error) {
 	if resume != "" {
 		arguments = append(arguments, "--resume", resume)
 	}
-	arguments = append(arguments, "--remote-control", w.name)
+	arguments = append(arguments, "--settings", permissionsPath, "--remote-control", w.name)
 	if continuation != "" {
 		arguments = append(arguments, "--", checkpoint.ContinuationPrompt)
 	}
