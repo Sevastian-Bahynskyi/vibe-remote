@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +83,8 @@ func New(options Options) (*Server, error) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /{$}", server.dashboard)
 	mux.HandleFunc("GET /api/state", server.state)
+	mux.HandleFunc("GET /api/remote-sessions/{id}/console", server.readTerminal)
+	mux.HandleFunc("POST /api/remote-sessions/{id}/console", server.updateTerminal)
 	mux.HandleFunc("POST /api/accounts", server.addAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", server.removeAccount)
 	mux.HandleFunc("POST /api/remote-sessions", server.createRemoteSession)
@@ -109,6 +113,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("GET /ui/fragments/alerts", server.uiFragmentAlerts)
 	mux.HandleFunc("GET /ui/fragments/session/{id}", server.uiFragmentSession)
 	mux.HandleFunc("GET /ui/fragments/activity/{id}", server.uiFragmentActivity)
+	mux.HandleFunc("GET /ui/fragments/handoff/{id}", server.uiFragmentHandoff)
 	mux.HandleFunc("GET /ui/fragments/conversation-options", server.uiFragmentConversationOptions)
 
 	mux.HandleFunc("POST /ui/sessions", server.uiCreateSession)
@@ -117,6 +122,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("POST /ui/sessions/{id}/restart", server.uiSessionLifecycle("restart"))
 	mux.HandleFunc("POST /ui/sessions/{id}/stop", server.uiSessionLifecycle("stop"))
 	mux.HandleFunc("POST /ui/sessions/{id}/open-desktop", server.uiOpenDesktop)
+	mux.HandleFunc("POST /ui/sessions/{id}/handoff", server.uiSessionHandoff)
 	mux.HandleFunc("POST /ui/sessions/{id}/delete", server.uiDeleteSession)
 	mux.HandleFunc("POST /ui/accounts", server.uiAddAccount)
 	mux.HandleFunc("POST /ui/accounts/{id}/refresh", server.uiRefreshAccount)
@@ -945,9 +951,18 @@ func (s *Server) requireMutationHeader(next http.Handler) http.Handler {
 	})
 }
 
+type styleNonceContextKey struct{}
+
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		var bytes [16]byte
+		if _, err := rand.Read(bytes[:]); err != nil {
+			http.Error(response, "Dashboard unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		nonce := base64.StdEncoding.EncodeToString(bytes[:])
+		request = request.WithContext(context.WithValue(request.Context(), styleNonceContextKey{}, nonce))
+		response.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'nonce-"+nonce+"'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		response.Header().Set("Referrer-Policy", "no-referrer")
 		response.Header().Set("X-Content-Type-Options", "nosniff")
 		response.Header().Set("X-Frame-Options", "DENY")

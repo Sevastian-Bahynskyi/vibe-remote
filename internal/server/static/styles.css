@@ -3,6 +3,18 @@
    never goes below 0.9rem — the previous dashboard used 36px buttons and
    0.59rem labels, which is what made it hard to use on a phone. */
 
+.approval-console { margin-block: 1.5rem; }
+.approval-console summary { cursor: pointer; min-height: var(--tap); padding-block: 0.65rem; font-weight: 600; }
+.approval-console p { color: var(--muted); }
+.console-display { overflow-x: auto; padding: 0.75rem; border-radius: var(--radius-sm); background: #111318; }
+.console-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.console-controls .btn { flex: 1 0 4.5rem; }
+.console-status { font-size: 0.9rem; }
+.conversation-picker { margin-top: 0.5rem; }
+.conversation-picker summary { cursor: pointer; min-height: var(--tap); padding-block: 0.65rem; color: var(--muted); overflow-wrap: anywhere; }
+.conversation-picker[open] summary { color: var(--ink); }
+.session-delete { margin-top: 1.5rem; }
+
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;

@@ -2,10 +2,13 @@ module github.com/Sevastian-Bahynskyi/vibe-remote
 
 go 1.25.0
 
-require modernc.org/sqlite v1.58.0
+require (
+	github.com/creack/pty v1.1.24
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
+	modernc.org/sqlite v1.58.0
+)
 
 require (
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

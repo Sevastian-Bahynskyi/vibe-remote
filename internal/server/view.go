@@ -248,8 +248,10 @@ type ConfirmView struct {
 // SessionDetailView is the session screen: one session plus, when the last
 // action needs confirming, the row that asks.
 type SessionDetailView struct {
-	Session SessionView
-	Confirm *ConfirmView
+	Session      SessionView
+	Confirm      *ConfirmView
+	Destinations []HandoffDestinationView
+	CanHandoff   bool
 }
 
 // HandoffDestinationView is one place a conversation can be continued. Codex is

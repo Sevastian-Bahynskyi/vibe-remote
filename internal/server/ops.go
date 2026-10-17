@@ -341,6 +341,10 @@ func (s *Server) updateSessionOp(ctx context.Context, id, title string, pinned b
 func (s *Server) createHandoffOp(ctx context.Context, sourceSessionID string, provider model.Provider, destinationAccountID string) (model.Handoff, string, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+	return s.createHandoffLocked(ctx, sourceSessionID, provider, destinationAccountID)
+}
+
+func (s *Server) createHandoffLocked(ctx context.Context, sourceSessionID string, provider model.Provider, destinationAccountID string) (model.Handoff, string, error) {
 	session, err := s.store.GetSession(ctx, sourceSessionID)
 	if err != nil {
 		return model.Handoff{}, "", failText(http.StatusNotFound, "source session not found")

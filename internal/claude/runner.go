@@ -16,9 +16,10 @@ import (
 
 // Command describes one invocation of the unmodified Claude Code binary.
 type Command struct {
-	Args []string
-	Dir  string
-	Env  []string
+	Args               []string
+	Dir                string
+	Env                []string
+	ComputerUseRequest func() string
 }
 
 // Process is the subset of os.Process behavior needed by the worker supervisor.
@@ -108,17 +109,23 @@ func (r *execRunner) Start(command Command) (Process, error) {
 	cmd := exec.Command(binary, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = command.Env
-	process := &execProcess{cmd: cmd, ready: make(chan struct{}), done: make(chan struct{})}
+	process := &execProcess{cmd: cmd, ready: make(chan struct{}), done: make(chan struct{}), console: newTerminalBuffer()}
 	observer := &readinessWriter{process: process}
 	// Inspect output for the short-lived Remote Control URL. It is kept only in
 	// process memory so the tailnet dashboard can open the registered session.
-	terminal, startErr := pty.Start(cmd)
+	terminal, startErr := pty.StartWithSize(cmd, &pty.Winsize{Cols: 80, Rows: 30})
 	if startErr != nil {
 		return nil, startErr
 	}
 	process.terminal = terminal
+	output := io.MultiWriter(observer, process.console)
+	if command.ComputerUseRequest != nil {
+		process.approval = newComputerUseApprover(process, command.ComputerUseRequest)
+		output = io.MultiWriter(observer, process.console, process.approval)
+		go process.approval.run()
+	}
 	go func() {
-		_, _ = io.Copy(observer, terminal)
+		_, _ = io.Copy(output, terminal)
 	}()
 	go process.reap()
 	return process, nil
@@ -127,6 +134,9 @@ func (r *execRunner) Start(command Command) (Process, error) {
 type execProcess struct {
 	cmd        *exec.Cmd
 	terminal   *os.File
+	console    *terminalBuffer
+	approval   *computerUseApprover
+	inputMu    sync.Mutex
 	ready      chan struct{}
 	done       chan struct{}
 	readyOnce  sync.Once

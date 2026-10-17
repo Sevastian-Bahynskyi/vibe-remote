@@ -32,7 +32,7 @@ func Install(layout paths.Layout, executable string) error {
 	if err := paths.Ensure(layout); err != nil {
 		return err
 	}
-	if err := installManagedFiles(layout, executable); err != nil {
+	if err := installManagedFiles(layout, executable, func(path string) error { return signInstalledExecutable(layout, path) }); err != nil {
 		return err
 	}
 	if err := writeLaunchAgent(layout); err != nil {
@@ -52,9 +52,9 @@ func Install(layout paths.Layout, executable string) error {
 	return nil
 }
 
-func installManagedFiles(layout paths.Layout, executable string) error {
+func installManagedFiles(layout paths.Layout, executable string, prepare ...func(string) error) error {
 	preserveVerification := systemstate.CodexHooksVerified(layout.CodexHooks, layout.CodexHookVerified, layout.Binary)
-	if err := copyExecutable(executable, layout.Binary); err != nil {
+	if err := copyExecutable(executable, layout.Binary, prepare...); err != nil {
 		return err
 	}
 	if err := InstallHooks(layout); err != nil {
@@ -138,13 +138,14 @@ func InstallClaudeHooks(profileDir, binary string) error {
 	return writeJSONAtomic(settingsPath, settings, 0o600)
 }
 
-func copyExecutable(source, destination string) error {
+func copyExecutable(source, destination string, prepare ...func(string) error) error {
 	in, err := os.Open(source)
 	if err != nil {
 		return fmt.Errorf("open executable: %w", err)
 	}
 	defer in.Close()
 	temporary := destination + ".new"
+	defer os.Remove(temporary)
 	out, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return fmt.Errorf("create installed executable: %w", err)
@@ -156,6 +157,11 @@ func copyExecutable(source, destination string) error {
 	}
 	if closeErr != nil {
 		return fmt.Errorf("close installed executable: %w", closeErr)
+	}
+	for _, action := range prepare {
+		if err := action(temporary); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(temporary, destination); err != nil {
 		return fmt.Errorf("activate installed executable: %w", err)

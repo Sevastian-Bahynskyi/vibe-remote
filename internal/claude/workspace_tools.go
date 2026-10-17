@@ -62,6 +62,8 @@ func enableWorkspaceTools(profileDir, workspace string) error {
 	project["hasTrustDialogAccepted"] = true
 	projects[workspace] = project
 	state["projects"] = projects
+	state["hasCompletedOnboarding"] = true
+	state["hasCompletedClaudeInChromeOnboarding"] = true
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {

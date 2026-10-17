@@ -28,6 +28,7 @@ Requirements:
 - Claude Code 2.1.261 or newer
 - Codex CLI/Desktop with hooks support
 - Go 1.25 or newer to build from source
+- An Apple Development or Developer ID Application signing certificate in the macOS Keychain
 
 Build and install:
 
@@ -37,6 +38,8 @@ go build -o ./build/vibe-remote ./cmd/vibe-remote
 ```
 
 The installer places the binary and SQLite database under `~/Library/Application Support/Vibe Remote`, installs `~/Library/LaunchAgents/com.seva.vibe-remote.plist`, merges checkpoint hooks, preserves an existing Codex notifier, and adds only `/vibe-remote/` to Tailscale Serve.
+
+The installer signs the service with a certificate-backed `com.seva.vibe-remote` identity so macOS permissions can survive replacement builds. On first install it prefers a valid Developer ID Application certificate, then Apple Development, and saves that certificate's fingerprint in the private `signing-identity` file. Later installs reuse it. Set `VIBE_REMOTE_SIGNING_IDENTITY` to a certificate's 40-character fingerprint to choose explicitly. Signing keys stay in Keychain. An expired or unavailable saved certificate stops installation rather than silently reverting to ad hoc signing. After migrating an older installation, remove and re-add the installed service in macOS permissions once.
 
 Open the URL shown by:
 
@@ -48,18 +51,18 @@ Open the URL shown by:
 
 1. Add each Claude account from the dashboard. An official login opens on the Mac; complete it once with the email shown in the dashboard.
 2. Add each local workspace by absolute path.
-3. Before using a workspace remotely for the first time, run Claude locally in it with the desired profile and accept Claude's workspace trust prompt. Vibe Remote reports this explicitly if it is missing.
+3. Adding a workspace authorizes managed sessions to trust that folder and enable its configured MCP servers automatically, including sessions on newly added accounts.
 4. In Codex, open `/hooks` once and trust the installed Vibe Remote hooks. The dashboard changes from `Installed · verify /hooks` to `Verified` after an actual hook event.
 5. Press **New** under **Remote sessions**, choose the account, the workspace, and either **New conversation** or an earlier Claude checkpoint to resume. The dashboard reports success only after Claude registers an interactive Remote Control bridge.
 6. On the phone, sign into the matching Claude account and tap **Open live session** on that card in the dashboard. On the Mac itself the same card offers **Open in Claude Desktop**, which hands the session's Remote Control link to the Claude app instead of a browser tab; **Open in browser** stays next to it.
 
 ## Running and switching sessions
 
-Start as many sessions as you need. Each one gets a distinct Remote Control name — by default `Vibe Remote · <email> · <workspace>`, made unique with a numeric suffix — so parallel sessions are told apart in the Claude app. Starting, stopping, restarting, or removing one session never disturbs the others. Managed sessions start in Claude’s `auto` permission mode, which checks tool actions and can recognize specific approvals stated in chat. Restart a session to apply this launch setting; existing running sessions keep their current mode.
+Start as many sessions as you need. Each one gets a distinct Remote Control name — by default `Vibe Remote · <email> · <workspace>`, made unique with a numeric suffix — so parallel sessions are told apart in the Claude app. Starting, stopping, restarting, or removing one session never disturbs the others. Managed sessions start in Claude’s `bypassPermissions` mode, as authorized by the owner. Vibe Remote saves the owner-authorized first-use acknowledgement in each session’s settings, including new profiles. Routine tool calls do not go through the auto-mode classifier or permission prompts. Explicit deny rules, project hooks, and server-side restrictions still apply. Restart a session to apply this launch setting; existing running sessions keep their current mode.
 
 **Move / edit** on a session card changes its account, workspace, conversation, or name and restarts it so the change takes effect. **Restart** reapplies the current settings in place. Both first request a graceful stop; if active work does not stop, the dashboard asks before forcing it, and every open checkpoint known to that worker is marked interrupted with a fresh Git snapshot before termination.
 
-At every launch, managed sessions load the `allow`, `ask`, and `deny` permission rules from `~/.claude/settings.json` through a private settings file. This shares your saved approvals across accounts without copying credentials, environment variables, hooks, or permission modes. Vibe Remote also allows `Bash(gh issue edit *)`; matching ask and deny rules still take precedence. Changes to the shared rules apply at the next session launch. Account-specific settings and project rules remain in effect.
+At every launch, managed sessions load the `allow`, `ask`, and `deny` permission rules from `~/.claude/settings.json` through a private settings file. This shares your saved approvals across accounts without copying credentials, environment variables, hooks, or permission modes. Vibe Remote also allows `Bash(gh issue edit *)`; matching ask and deny rules still take precedence. Changes to the shared rules apply at the next session launch. Account-specific settings and project rules remain in effect. Managed sessions also approve project `.mcp.json` servers at launch, so a new profile does not stop at the MCP setup dialog; explicitly disabled servers remain disabled.
 
 Removing a session stops it and forgets the slot; its captured checkpoints are kept. Sessions that were running are restored automatically when the service restarts.
 
@@ -83,7 +86,27 @@ For a native Claude session, **Copy resume command** restores the correct isolat
 
 ## Browser and computer use
 
-Remote Control keeps the full local Claude environment, including local MCP servers and project configuration. Browser work is available after Claude in Chrome is configured. Native computer control is available on supported Pro/Max accounts after enabling the built-in `computer-use` MCP server with `/mcp` for that project and granting macOS Accessibility and Screen Recording permissions. Those one-time macOS approvals cannot safely be bypassed by Vibe Remote.
+Remote Control keeps the full local Claude environment, including local MCP servers and project configuration. Browser work is available after Claude in Chrome is configured. Native computer control is available on supported Pro/Max accounts with the built-in `computer-use` MCP server enabled for the project. Managed sessions enable it at launch. Grant macOS Accessibility (called Device Control and Data Access on newer macOS versions) and Screen Recording to the installed `~/Library/Application Support/Vibe Remote/bin/vibe-remote` service: macOS attributes these sessions' requests to their launching service. Claude Desktop's grants do not cover the service. Restart the service after granting permissions.
+
+The owner authorizes computer use for every managed profile, including future accounts. When you ask a session to use a Mac app, Vibe Remote answers Claude's separate app-access dialog automatically; opening the approval console is unnecessary. Approval follows the current computer-use tool and selected option, so terminal animations cannot stall it. A truncated app list expands automatically before approval. Requested clipboard and system-key flags are included. Unknown dialogs and missing macOS grants still need attention; Claude's app tiers, policy blocks, and single-session lock remain in effect. Vibe Remote does not modify the Claude executable.
+
+Each launch also loads the Mac-wide MCP server definitions from `~/.claude.json` through a private per-session `--mcp-config` file. Local integrations such as Rive are available to existing and future profiles without registering them for every account. Only server definitions are shared; Claude login state, project history, and unrelated account preferences are excluded. Environment-variable references remain references. Updated or removed definitions refresh at the next launch; independent registrations already saved in a profile remain its own configuration.
+
+The Claude mobile app may show an access tool as running without approval buttons. Expand **Approval console** on its Vibe Remote session as a fallback. Use Up/Down or Tab to select an option, Space to select apps, Enter to confirm, and Escape to dismiss. The console cannot submit typed commands and refuses input for restarted or stopping workers; close and reopen it after a restart. Closing the console disconnects polling without stopping Claude.
+
+Each session offers direct handoff buttons for Codex and other signed-in Claude profiles. A handoff stops the source, reads its latest checkpoint, and keeps the workspace. Claude destinations start automatically; Codex uses the existing 48-hour continuation ticket. New sessions default to a new conversation, with previous conversations under a collapsed picker.
+
+Console output is a bounded, in-memory byte stream for the current worker, never saved in logs or checkpoints. Reading and sending keys require the dashboard's same-origin header and reject cross-origin requests. Like other dashboard features, it is available only through the loopback listener or the existing private Tailscale Serve route. Terminal rendering uses bundled xterm.js 6.0.0 (MIT), with its three generated style elements adapted to carry the dashboard's CSP nonce; no external scripts or unrestricted inline styles are needed.
+
+Vibe Remote can provision shared Supabase connections into every Claude profile when a workspace session starts. Configure `~/Library/Application Support/Vibe Remote/workspace-supabase.json` with a `workspaces` object keyed by absolute repository path; each value maps connection names (`supabase`, optional compatibility aliases, and `supabase-production`) to Claude HTTP MCP definitions (`type`, `url`, `headers`). Use the official `https://mcp.supabase.com/mcp` endpoint with an explicit `project_ref`, and `Authorization: Bearer ${YOUR_TOKEN_ENV_VAR}`. Tokens remain in the workspace environment. Production connections must include `read_only=true`. Linked Git worktrees inherit the main repository's configuration. An optional `repositories` object maps normalized Git remote identities such as `github.com/couplegoai/couplegoai` to a configured workspace path, allowing fresh checkouts to inherit the same connections. SSH and HTTPS remote forms match the same identity; conflicting mappings stop launch. Only missing credential variables referenced by those connections are inherited from the configured workspace's direnv environment; unrelated environment settings are not copied.
+
+Before launching a configured session, Vibe Remote checks that credential variables exist and that the authenticated MCP endpoint exposes `execute_sql`. Missing credentials, revoked access, or network failures stop that session's launch with a diagnostic in the dashboard. The check performs no SQL queries. Connection names generate matching allow rules while retaining explicit ask/deny rules and project hooks; bypass permission mode stays enabled. Updating this file takes effect on the next session launch, including launches using newly added profiles.
+
+## Shared Claude session settings
+
+Vibe Remote loads optional `~/.claude/settings.shared.json` whenever it starts a Claude workspace session. Its `env` and `hooks` fields are explicitly shared across every account profile, checkout, and worktree; ordinary global settings still contribute only permission rules. Use absolute hook script paths outside repositories, and let shared hooks check repository identity when a policy applies to one project. Keep secrets in the existing secure environment setup. Missing shared settings preserve the previous behavior; malformed settings stop the session launch. Changes take effect on the next session launch.
+
+For direct Claude sessions, register the same hooks in `~/.claude/settings.json`; for Codex, use `~/.codex/hooks.json` and review new hooks through `/hooks`. These machine-local files survive repository replacement and worktree creation.
 
 ## Security model
 

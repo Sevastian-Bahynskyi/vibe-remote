@@ -619,10 +619,25 @@ func (m *Manager) start(w *worker) (Process, error) {
 		return nil, errors.New("could not load continuation checkpoint")
 	}
 
+	servers, credentialWorkspace, err := resolveWorkspaceSupabase(filepath.Join(filepath.Dir(m.profilesRoot), "workspace-supabase.json"), w.workspace)
+	if err != nil {
+		return nil, err
+	}
+	environment := m.workerEnv(w)
+	if len(servers) > 0 && credentialWorkspace != "" && credentialWorkspace != w.workspace {
+		environment = inheritSupabaseCredentials(servers, environment, direnvEnv(credentialWorkspace))
+	}
+	if err := checkWorkspaceSupabase(w.ctx, servers, environment); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.workers[w.id] != w || w.ctx.Err() != nil {
 		return nil, context.Canceled
+	}
+	if err := provisionWorkspaceSupabase(w.account.ProfileDir, w.workspace, servers); err != nil {
+		return nil, err
 	}
 	w.resume = resume
 	w.model = modelName
@@ -642,10 +657,14 @@ func (m *Manager) start(w *worker) (Process, error) {
 		return nil, fmt.Errorf("resolve shared Claude settings: %w", err)
 	}
 	permissionsPath := filepath.Join(m.workerPIDDir, w.id+".permissions.json")
-	if err := provisionPermissions(filepath.Join(home, ".claude", "settings.json"), permissionsPath); err != nil {
+	if err := provisionPermissions(filepath.Join(home, ".claude", "settings.json"), permissionsPath, supabasePermissionRules(servers)...); err != nil {
 		return nil, err
 	}
-	arguments := []string{"--permission-mode", "auto", "--chrome", "--verbose"}
+	mcpPath := filepath.Join(m.workerPIDDir, w.id+".mcp.json")
+	if err := provisionSharedMCP(filepath.Join(home, ".claude.json"), mcpPath); err != nil {
+		return nil, err
+	}
+	arguments := []string{"--permission-mode", "bypassPermissions", "--chrome", "--verbose"}
 	if modelName != "" {
 		arguments = append(arguments, "--model", modelName)
 	}
@@ -655,14 +674,15 @@ func (m *Manager) start(w *worker) (Process, error) {
 	if resume != "" {
 		arguments = append(arguments, "--resume", resume)
 	}
-	arguments = append(arguments, "--settings", permissionsPath, "--remote-control", w.name)
+	arguments = append(arguments, "--settings", permissionsPath, "--mcp-config", mcpPath, "--remote-control", w.name)
 	if continuation != "" {
 		arguments = append(arguments, "--", checkpoint.ContinuationPrompt)
 	}
 	process, err := m.runner.Start(Command{
-		Args: arguments,
-		Dir:  w.workspace,
-		Env:  m.workerEnv(w),
+		Args:               arguments,
+		Dir:                w.workspace,
+		Env:                mergeEnv(environment, []string{"VIBE_REMOTE_ACTIVITY_RUN_ID=" + runID}),
+		ComputerUseRequest: m.computerUseRequest(w, runID),
 	})
 	if err != nil {
 		return nil, err

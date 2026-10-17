@@ -70,3 +70,71 @@ func TestDashboardShowsConfirmationAndToolTimingSeparately(t *testing.T) {
 		t.Fatal("stopped slot displays old activity")
 	}
 }
+
+func TestAutomaticComputerUseApprovalRequiresItsLiveTool(t *testing.T) {
+	runner := &continuationRunner{}
+	s, db := newTestServerWithStore(t, runner)
+	seedRunnableSlot(t, s, db, "approval", "12345678-1234-4123-8123-123456789abc")
+	slot, err := db.GetRemoteSession(t.Context(), "approval")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.claude.Activate(t.Context(), claude.WorkerSpec{ID: slot.ID, Name: slot.Name, AccountID: slot.AccountID, Workspace: slot.WorkspacePath}); err != nil {
+		t.Fatal(err)
+	}
+	command := runner.commands[0]
+	if command.ComputerUseRequest == nil || command.ComputerUseRequest() != "" {
+		t.Fatal("idle worker can auto-approve")
+	}
+	runID := ""
+	for _, value := range command.Env {
+		if strings.HasPrefix(value, "VIBE_REMOTE_ACTIVITY_RUN_ID=") {
+			runID = strings.TrimPrefix(value, "VIBE_REMOTE_ACTIVITY_RUN_ID=")
+		}
+	}
+	event := store.ActivityEvent{SlotID: slot.ID, RunID: runID, SessionID: "computer-conversation", AccountID: slot.AccountID, WorkspacePath: slot.WorkspacePath, Event: "PreToolUse", RequestID: "request", Name: "mcp__computer-use__request_access", OccurredAt: time.Now()}
+	if err := db.RecordWorkerActivity(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	if command.ComputerUseRequest() == "" {
+		t.Fatal("active app-access tool not recognized")
+	}
+	event.Event = "PostToolUse"
+	if err := db.RecordWorkerActivity(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	if command.ComputerUseRequest() != "" {
+		t.Fatal("finished tool can auto-approve")
+	}
+	for _, name := range []string{"mcp__computer-use__request_full_control", "mcp__computer-use__screenshot"} {
+		event.Event = "PreToolUse"
+		event.RequestID = name
+		event.Name = name
+		event.OccurredAt = event.OccurredAt.Add(time.Second)
+		if err := db.RecordWorkerActivity(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+		if command.ComputerUseRequest() == "" {
+			t.Fatal("computer-use access flow was not recognized")
+		}
+		event.Event = "PostToolUse"
+		if err := db.RecordWorkerActivity(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	event.Event = "PreToolUse"
+	event.RequestID = "other"
+	event.Name = "mcp__other__request_access"
+	if err := db.RecordWorkerActivity(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	if command.ComputerUseRequest() != "" {
+		t.Fatal("unrelated MCP tool can auto-approve")
+	}
+	if err := s.claude.Deactivate(t.Context(), slot.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if command.ComputerUseRequest() != "" {
+		t.Fatal("stopped worker can auto-approve")
+	}
+}

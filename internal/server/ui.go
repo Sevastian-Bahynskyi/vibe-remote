@@ -14,8 +14,9 @@ import (
 // optional sections rather than a type per screen: the layout needs the chrome
 // fields on every render, and one type means one thing to reason about.
 type pageData struct {
-	Title  string
-	Screen string
+	StyleNonce string
+	Title      string
+	Screen     string
 	// Back is the relative href of the screen's back arrow, empty on home.
 	Back   string
 	Notice NoticeView
@@ -761,7 +762,16 @@ func (s *Server) sessionDetail(ctx context.Context, id string, local bool, confi
 	if !found {
 		return SessionDetailView{}, failText(http.StatusNotFound, "that session no longer exists")
 	}
-	return SessionDetailView{Session: buildSession(state, remote), Confirm: confirm}, nil
+	eligible := make([]model.Account, 0, len(state.Accounts))
+	for _, account := range state.Accounts {
+		if account.ID != remote.AccountID {
+			eligible = append(eligible, account)
+		}
+	}
+	source, sourceErr := s.store.GetSessionByNativeID(ctx, model.ProviderClaude, remote.ResumeSessionID)
+	canHandoff := sourceErr == nil && source.AccountID == remote.AccountID && source.WorkspacePath == remote.WorkspacePath
+	return SessionDetailView{Session: buildSession(state, remote), Confirm: confirm,
+		Destinations: buildHandoffDestinations(eligible), CanHandoff: canHandoff}, nil
 }
 
 func (s *Server) conversationDetail(ctx context.Context, id string, local bool) (ConversationDetailView, error) {

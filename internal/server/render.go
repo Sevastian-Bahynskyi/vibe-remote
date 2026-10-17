@@ -113,6 +113,7 @@ func (s *Server) render(response http.ResponseWriter, status int, set *template.
 // swaps it into #app; a cold load, a bookmark, or a browser reload gets the
 // whole document. Both execute the same screen template.
 func (s *Server) renderScreen(response http.ResponseWriter, request *http.Request, status int, screen string, data pageData) {
+	data.StyleNonce, _ = request.Context().Value(styleNonceContextKey{}).(string)
 	if isHTMXRequest(request) {
 		// The topbar sits outside #app, and #app is the only region a screen swap
 		// replaces, so the topbar has to come back out of band. Without it the

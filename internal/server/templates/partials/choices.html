@@ -18,15 +18,24 @@
 <fieldset id="conversation-choices" class="field">
   <legend>Conversation</legend>
   <div class="choices">
-    {{range .}}{{template "choice" .}}{{end}}
+    {{range .}}{{if or (eq .Value "@new") (eq .Value "@keep")}}{{template "choice" .}}{{end}}{{end}}
   </div>
+  {{$previous := false}}{{range .}}{{if and (ne .Value "@new") (ne .Value "@keep")}}{{$previous = true}}{{end}}{{end}}
+  {{if $previous}}
+  <details class="conversation-picker">
+    <summary>Choose a previous conversation</summary>
+    <div class="choices">
+      {{range .}}{{if and (ne .Value "@new") (ne .Value "@keep")}}{{template "choice" .}}{{end}}{{end}}
+    </div>
+  </details>
+  {{end}}
 </fieldset>
 {{end}}
 
 {{define "session-form"}}
 <form class="form" id="session-form"
       hx-post="{{.Action}}" hx-target="#app" hx-swap="innerHTML"
-      hx-disabled-elt="find button[type=submit]">
+      hx-disabled-elt="#session-form button[type=submit]">
   {{if .SessionID}}<input type="hidden" name="sessionId" value="{{.SessionID}}">{{end}}
 
   {{if .Blocker}}

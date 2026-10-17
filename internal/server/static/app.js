@@ -105,6 +105,16 @@
   // panel, so its value is set on change rather than bound once.
 
   document.addEventListener('change', function (event) {
+    if (event.target.matches('input[name="conversation"]')) {
+      var choices = event.target.closest('#conversation-choices');
+      var picker = choices && choices.querySelector('.conversation-picker');
+      if (picker) {
+        var past = event.target.closest('.conversation-picker');
+        var label = event.target.closest('.choice').querySelector('.choice-label');
+        picker.querySelector('summary').textContent = past ? label.textContent : 'Choose a previous conversation';
+        if (!past) picker.open = false;
+      }
+    }
     var select = event.target.closest('[data-theme-select]');
     if (!select) return;
     applyTheme(select.value);

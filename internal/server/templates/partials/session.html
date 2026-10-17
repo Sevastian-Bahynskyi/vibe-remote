@@ -48,6 +48,23 @@
 
   {{if .LastError}}<p class="detail-error">{{.LastError}}</p>{{end}}
 
+  {{if .Running}}
+  <details class="approval-console" data-console="api/remote-sessions/{{.ID}}/console">
+    <summary>Approval console</summary>
+    <p>App access is approved automatically. Use this fallback if Claude gets stuck: choose an option and press Enter, or press Escape to dismiss.</p>
+    <p class="console-status" role="status" aria-live="polite">Open to connect.</p>
+    <div class="console-display" aria-label="Claude approval terminal"></div>
+    <div class="console-controls" aria-label="Approval controls">
+      <button class="btn" type="button" data-console-key="up">Up</button>
+      <button class="btn" type="button" data-console-key="down">Down</button>
+      <button class="btn" type="button" data-console-key="tab">Tab</button>
+      <button class="btn" type="button" data-console-key="space">Space</button>
+      <button class="btn btn-primary" type="button" data-console-key="enter">Enter</button>
+      <button class="btn" type="button" data-console-key="escape">Escape</button>
+    </div>
+  </details>
+  {{end}}
+
   <dl class="facts">
     <div><dt>Account</dt><dd>{{.AccountEmail}}</dd></div>
     <div><dt>Workspace</dt><dd>{{.WorkspaceLabel}}</dd></div>
@@ -85,13 +102,32 @@
           <button class="btn btn-wide" type="submit">Stop session<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
         </form>
       {{end}}
-      <a class="btn btn-wide" href="{{screen "session-edit" .ID}}" hx-get="{{screen "session-edit" .ID}}" hx-target="#app" hx-push-url="true">Change account, workspace or conversation</a>
-      <form hx-post="ui/sessions/{{.ID}}/delete" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
-        <button class="btn btn-danger btn-wide" type="submit">Delete session</button>
-      </form>
     </div>
     {{end}}
+    {{template "session-handoff" .}}
+    {{with .Session}}
+    <form class="session-delete" hx-post="ui/sessions/{{.ID}}/delete" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <button class="btn btn-danger-quiet btn-wide" type="submit">Delete session</button>
+    </form>
+    {{end}}
   {{end}}
+</section>
+{{end}}
+
+{{define "session-handoff"}}
+<section id="session-handoff-{{.Session.ID}}"{{if not .CanHandoff}} data-refresh="ui/fragments/handoff/{{.Session.ID}}" data-refresh-every="2000"{{end}}>
+  <h3 class="section-title">Hand off this session</h3>
+  {{if not .CanHandoff}}<p class="row-meta">Send a message in this session to make its conversation available.</p>{{end}}
+  <div class="detail-actions">
+    {{$id := .Session.ID}}{{$canHandoff := .CanHandoff}}
+    {{range .Destinations}}
+    <form hx-post="ui/sessions/{{$id}}/handoff" hx-target="#session-detail" hx-swap="outerHTML" hx-disabled-elt="find button">
+      <input type="hidden" name="destinationProvider" value="{{.Provider}}">
+      <input type="hidden" name="destinationAccountId" value="{{.AccountID}}">
+      <button class="btn btn-wide" type="submit"{{if not $canHandoff}} disabled{{end}}>Hand off to {{if eq .Provider "claude"}}Claude · {{end}}{{.Label}}<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
+    </form>
+    {{end}}
+  </div>
 </section>
 {{end}}
 

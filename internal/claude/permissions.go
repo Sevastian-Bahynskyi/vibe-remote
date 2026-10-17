@@ -15,28 +15,54 @@ type permissionRules struct {
 }
 
 type permissionSettings struct {
-	Permissions permissionRules `json:"permissions"`
+	Permissions                       permissionRules              `json:"permissions"`
+	Env                               map[string]string            `json:"env,omitempty"`
+	Hooks                             map[string][]json.RawMessage `json:"hooks,omitempty"`
+	SkipDangerousModePermissionPrompt bool                         `json:"skipDangerousModePermissionPrompt"`
+	EnableAllProjectMcpServers        bool                         `json:"enableAllProjectMcpServers"`
 }
 
-func provisionPermissions(sourcePath, destinationPath string) error {
-	settings := permissionSettings{}
+type sharedSessionSettings struct {
+	Env   map[string]string            `json:"env,omitempty"`
+	Hooks map[string][]json.RawMessage `json:"hooks,omitempty"`
+}
+
+func provisionPermissions(sourcePath, destinationPath string, additionalRules ...string) error {
+	settings := permissionSettings{SkipDangerousModePermissionPrompt: true, EnableAllProjectMcpServers: true}
 	if data, err := os.ReadFile(sourcePath); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
+		var source struct {
+			Permissions permissionRules `json:"permissions"`
+		}
+		if err := json.Unmarshal(data, &source); err != nil {
 			return errors.New("shared Claude permissions are malformed")
 		}
+		settings.Permissions = source.Permissions
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read shared Claude permissions: %w", err)
 	}
-	const issueEditRule = "Bash(gh issue edit *)"
-	found := false
-	for _, rule := range settings.Permissions.Allow {
-		if rule == issueEditRule {
-			found = true
-			break
+	sharedPath := filepath.Join(filepath.Dir(sourcePath), "settings.shared.json")
+	if data, err := os.ReadFile(sharedPath); err == nil {
+		var shared sharedSessionSettings
+		if err := json.Unmarshal(data, &shared); err != nil {
+			return errors.New("shared Claude session settings are malformed")
 		}
+		settings.Env = shared.Env
+		settings.Hooks = shared.Hooks
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read shared Claude session settings: %w", err)
 	}
-	if !found {
-		settings.Permissions.Allow = append(settings.Permissions.Allow, issueEditRule)
+	additionalRules = append(additionalRules, "Bash(gh issue edit *)")
+	for _, additionalRule := range additionalRules {
+		found := false
+		for _, rule := range settings.Permissions.Allow {
+			if rule == additionalRule {
+				found = true
+				break
+			}
+		}
+		if !found {
+			settings.Permissions.Allow = append(settings.Permissions.Allow, additionalRule)
+		}
 	}
 	data, err := json.Marshal(settings)
 	if err != nil {
