@@ -138,3 +138,59 @@ func TestAutomaticComputerUseApprovalRequiresItsLiveTool(t *testing.T) {
 		t.Fatal("stopped worker can auto-approve")
 	}
 }
+
+func TestAutomaticComputerUseApprovalSurvivesConversationChange(t *testing.T) {
+	runner := &continuationRunner{}
+	s, db := newTestServerWithStore(t, runner)
+	seedRunnableSlot(t, s, db, "approval-change", "12345678-1234-4123-8123-123456789abc")
+	slot, err := db.GetRemoteSession(t.Context(), "approval-change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.claude.Activate(t.Context(), workerSpec(slot)); err != nil {
+		t.Fatal(err)
+	}
+	command := runner.commands[0]
+	runID := ""
+	for _, value := range command.Env {
+		if strings.HasPrefix(value, "VIBE_REMOTE_ACTIVITY_RUN_ID=") {
+			runID = strings.TrimPrefix(value, "VIBE_REMOTE_ACTIVITY_RUN_ID=")
+		}
+	}
+	hooks := checkpoint.NewService(db, nil)
+	send := func(session, event, request string) {
+		t.Helper()
+		payload, err := json.Marshal(map[string]string{
+			"hook_event_name": event, "session_id": session, "cwd": slot.WorkspacePath,
+			"tool_name": "mcp__computer-use__request_access", "tool_use_id": request,
+			"prompt": "Continue the requested app task.",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = hooks.HandleStdin(t.Context(), model.ProviderClaude,
+			checkpoint.HookOrigin{SlotID: slot.ID, AccountID: slot.AccountID, ActivityRunID: runID},
+			strings.NewReader(string(payload)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("first", "UserPromptSubmit", "")
+	send("first", "PreToolUse", "first-request")
+	first := command.ComputerUseRequest()
+	if first == "" {
+		t.Fatal("first app-access request was not recognized")
+	}
+	send("first", "SessionEnd", "")
+	send("second", "SessionStart", "")
+	send("second", "UserPromptSubmit", "")
+	send("second", "PreToolUse", "second-request")
+	second := command.ComputerUseRequest()
+	if second == "" || second == first {
+		t.Fatal("new conversation did not get a distinct automatic approval request")
+	}
+	send("first", "SessionEnd", "")
+	if command.ComputerUseRequest() != second {
+		t.Fatal("late conversation end disabled automatic app approval")
+	}
+}

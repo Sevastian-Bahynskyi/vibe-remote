@@ -143,10 +143,9 @@ func (s *Service) HandleStdin(
 			}
 		}
 	}
-	// Link before recording: the conversation is the slot's regardless of
-	// whether this particular checkpoint lands, and linking first keeps a
-	// handoff claim from being stranded by a later failure.
-	if origin.SlotID != "" {
+	// Managed workers bind their conversation atomically with activity above.
+	// Legacy callers without a worker run still link before recording.
+	if origin.SlotID != "" && origin.ActivityRunID == "" {
 		if err := s.repository.LinkRemoteSessionConversation(ctx, origin.SlotID, event.NativeSessionID); err != nil {
 			return HookResponse{}, err
 		}

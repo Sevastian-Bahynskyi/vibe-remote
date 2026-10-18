@@ -62,11 +62,21 @@ func (s *Store) RecordWorkerActivity(ctx context.Context, event ActivityEvent) e
 		FROM worker_activity_runs a JOIN remote_sessions r ON r.id = a.slot_id
 		WHERE a.slot_id = ? AND a.run_id = ? AND r.account_id = ? AND r.workspace_path = ?`,
 		event.SlotID, event.RunID, event.AccountID, event.WorkspacePath).Scan(&sessionID, &accepting, &closed)
-	if errors.Is(err, sql.ErrNoRows) || closed != 0 || (sessionID != "" && sessionID != event.SessionID) {
+	if errors.Is(err, sql.ErrNoRows) || closed != 0 {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	startsConversation := event.Event == "SessionStart" || event.Event == "UserPromptSubmit"
+	if sessionID != "" && sessionID != event.SessionID {
+		if !startsConversation {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM worker_activity_items WHERE slot_id = ?`, event.SlotID); err != nil {
+			return err
+		}
+		sessionID = ""
 	}
 	if sessionID == "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE worker_activity_runs SET session_id = ? WHERE slot_id = ?`, event.SessionID, event.SlotID); err != nil {
@@ -74,17 +84,16 @@ func (s *Store) RecordWorkerActivity(ctx context.Context, event ActivityEvent) e
 		}
 	}
 	switch event.Event {
-	case "SessionStart":
-	case "UserPromptSubmit":
+	case "SessionStart", "UserPromptSubmit":
 		if _, err := tx.ExecContext(ctx, `UPDATE worker_activity_runs SET accepting = 1 WHERE slot_id = ?`, event.SlotID); err != nil {
 			return err
 		}
-	case "Stop", "StopFailure", "Interrupt", "SessionEnd":
-		ended := 0
-		if event.Event == "SessionEnd" {
-			ended = 1
+		if _, err := tx.ExecContext(ctx, `UPDATE remote_sessions SET resume_session_id = ?, updated_at = ? WHERE id = ? AND resume_session_id <> ?`,
+			event.SessionID, formatTime(s.now().UTC()), event.SlotID, event.SessionID); err != nil {
+			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE worker_activity_runs SET accepting = 0, closed = ? WHERE slot_id = ?`, ended, event.SlotID); err != nil {
+	case "Stop", "StopFailure", "Interrupt", "SessionEnd":
+		if _, err := tx.ExecContext(ctx, `UPDATE worker_activity_runs SET accepting = 0 WHERE slot_id = ?`, event.SlotID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE worker_activity_items SET finished = 1 WHERE slot_id = ?`, event.SlotID); err != nil {
