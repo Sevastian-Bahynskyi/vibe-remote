@@ -141,7 +141,7 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 		// resolves the binary per call instead, so the service stays up, reports
 		// "Claude Code: Not found", fails only the operations that truly need it,
 		// and recovers on its own once the CLI is back.
-		runner = &execRunner{override: strings.TrimSpace(options.ClaudePath)}
+		runner = &execRunner{override: strings.TrimSpace(options.ClaudePath), runtimeDir: filepath.Join(root, "claude-runtime")}
 	}
 
 	manager := &Manager{

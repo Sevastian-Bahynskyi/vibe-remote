@@ -46,7 +46,8 @@ type CommandRunner interface {
 // empty one is looked up through FindBinary on every call, so the service
 // survives Claude Code being absent and starts working the moment it returns.
 type execRunner struct {
-	override string
+	override   string
+	runtimeDir string
 
 	mu       sync.Mutex
 	resolved string
@@ -106,9 +107,23 @@ func (r *execRunner) Start(command Command) (Process, error) {
 	if err != nil {
 		return nil, err
 	}
+	environment := command.Env
+	if r.runtimeDir != "" {
+		snapshot, err := snapshotNativeExecutable(binary, r.runtimeDir)
+		if err != nil {
+			return nil, err
+		}
+		if snapshot != binary {
+			binary = snapshot
+			if environment == nil {
+				environment = os.Environ()
+			}
+			environment = mergeEnv(environment, []string{"DISABLE_UPDATES=1"})
+		}
+	}
 	cmd := exec.Command(binary, command.Args...)
 	cmd.Dir = command.Dir
-	cmd.Env = command.Env
+	cmd.Env = environment
 	process := &execProcess{cmd: cmd, ready: make(chan struct{}), done: make(chan struct{}), console: newTerminalBuffer()}
 	observer := &readinessWriter{process: process}
 	// Inspect output for the short-lived Remote Control URL. It is kept only in
