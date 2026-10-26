@@ -108,3 +108,28 @@ func TestReadinessWriterSanitizesKnownFailure(t *testing.T) {
 		t.Fatalf("unexpected readiness error: %v", err)
 	}
 }
+
+func TestUnavailableModelFailsWithoutExposingTerminalDetails(t *testing.T) {
+	process := &execProcess{ready: make(chan struct{})}
+	writer := &readinessWriter{process: process}
+	_, _ = writer.Write([]byte("model_not_found: fixture-sensitive-response"))
+	select {
+	case <-process.Ready():
+	default:
+		t.Fatal("unavailable model was not surfaced")
+	}
+	if process.ReadyError() == nil || process.ReadyError().Error() != modelUnavailableMessage {
+		t.Fatal("model failure was not sanitized")
+	}
+}
+
+func TestUnavailableModelAfterConnectionIsStillVisible(t *testing.T) {
+	process := &execProcess{ready: make(chan struct{})}
+	process.markReady(nil)
+	writer := &readinessWriter{process: process}
+	_, _ = writer.Write([]byte("Run\x1b[0m/model to pick\r\n a different model."))
+	status := workerStatus(&worker{process: process})
+	if status.LastError != modelUnavailableMessage {
+		t.Fatal("late model error hidden")
+	}
+}

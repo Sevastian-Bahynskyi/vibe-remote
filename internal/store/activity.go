@@ -43,8 +43,18 @@ func (s *Store) BeginWorkerActivity(ctx context.Context, slotID, runID string) e
 }
 
 func (s *Store) EndWorkerActivity(ctx context.Context, slotID, runID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE worker_activity_runs SET closed = 1 WHERE slot_id = ? AND run_id = ?`, slotID, runID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE worker_activity_runs SET closed=1 WHERE slot_id=? AND run_id=?`, slotID, runID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM worker_activity_items WHERE slot_id=? AND EXISTS(SELECT 1 FROM worker_activity_runs WHERE slot_id=? AND run_id=? AND closed=1)`, slotID, slotID, runID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) RecordWorkerActivity(ctx context.Context, event ActivityEvent) error {

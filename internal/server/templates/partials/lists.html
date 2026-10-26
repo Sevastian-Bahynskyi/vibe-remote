@@ -1,3 +1,16 @@
+{{define "account-panel"}}
+<section id="account-panel" data-refresh="ui/fragments/accounts" data-refresh-every="{{.SetupRefreshEvery}}">
+ {{if .SetupJobs}}<section aria-label="Account setup">
+ {{range .SetupJobs}}<article class="row">
+ <div class="row-text"><span class="row-name">{{.Email}}</span><span class="row-meta">Setup: {{.State}}</span></div>
+ {{if .Error}}<p class="row-error">{{.Error}}</p>{{end}}
+ {{if eq .State "pending"}}<form hx-post="ui/setup-jobs/{{.ID}}/cancel" hx-target="#account-panel" hx-swap="outerHTML"><button class="btn" type="submit">Cancel setup</button></form>
+ {{else if ne .State "ready"}}<form hx-post="ui/setup-jobs/{{.ID}}/retry" hx-target="#account-panel" hx-swap="outerHTML"><button class="btn" type="submit">Retry setup</button></form>{{end}}
+ </article>{{end}}</section>{{end}}
+ {{template "account-list" .Accounts}}
+</section>
+{{end}}
+
 {{define "account-list"}}
 <section id="account-list" class="cards">
   {{range .}}
@@ -7,10 +20,12 @@
       <div class="row-text">
         <span class="row-name">{{.Email}}</span>
         <span class="row-meta">{{.Status}}{{if .SessionCount}} · {{plural .SessionCount "session"}}{{end}}</span>
+ <span class="row-meta">{{.SetupStatus}}{{if .SetupConflicts}} · {{.SetupConflicts}} backed-up conflicts{{end}}</span>
       </div>
     </div>
     {{if .LastError}}<p class="row-error">{{.LastError}}</p>{{end}}
     <div class="row-actions">
+      <form hx-post="ui/accounts/{{.ID}}/repair" hx-target="#account-panel" hx-swap="outerHTML"><button class="btn" type="submit">Repair setup</button></form>
       <form hx-post="ui/accounts/{{.ID}}/refresh" hx-target="#account-list" hx-swap="outerHTML" hx-disabled-elt="find button">
         <button class="btn" type="submit">Check sign-in<span class="spinner htmx-indicator" aria-hidden="true"></span></button>
       </form>

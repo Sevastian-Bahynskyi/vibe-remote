@@ -42,14 +42,14 @@
 {{end}}
 
 {{define "session-detail"}}
-<section id="session-detail" class="detail">
+<section id="session-detail" class="detail" data-refresh="ui/fragments/session/{{.Session.ID}}" data-refresh-every="2000">
   {{with .Session}}
   {{template "session-activity" .}}
 
   {{if .LastError}}<p class="detail-error">{{.LastError}}</p>{{end}}
 
   {{if .Running}}
-  <details class="approval-console" data-console="api/remote-sessions/{{.ID}}/console">
+  <details id="console-{{.ID}}-{{.RunID}}" hx-preserve class="approval-console" data-console="api/remote-sessions/{{.ID}}/console">
     <summary>Approval console</summary>
     <p>App access is approved automatically. Use this fallback if Claude gets stuck: choose an option and press Enter, or press Escape to dismiss.</p>
     <p class="console-status" role="status" aria-live="polite">Open to connect.</p>
@@ -70,15 +70,20 @@
     <div><dt>Workspace</dt><dd>{{.WorkspaceLabel}}</dd></div>
     <div><dt>Folder</dt><dd class="mono">{{.WorkspacePath}}</dd></div>
     <div><dt>Conversation</dt><dd>{{.ConversationLabel}}</dd></div>
+    <div><dt>Requested model</dt><dd>{{.RequestedModel}} · {{.RequestedEffort}} effort</dd></div>
+    <div><dt>Last observed model</dt><dd>{{.ObservedModel}} · {{.ObservedEffort}} effort{{if .ObservedAt}}<br><time>{{.ObservedAt}}</time>{{end}}{{if .ModelMismatch}}<br>Model differs from your selection. Check availability in Claude.{{end}}</dd></div>
+    {{if .MemoryDirectory}}<div><dt>Shared learned memory</dt><dd class="mono">{{.MemoryDirectory}}{{if .MemoryConflicts}}<br>{{.MemoryConflicts}} differing imported versions; review IMPORTS.md.{{end}}</dd></div>{{end}}
     {{if .PID}}<div><dt>Process</dt><dd class="mono">{{.PID}}</dd></div>{{end}}
   </dl>
   {{end}}
 
+  <div id="session-controls-{{.Session.ID}}" data-session-controls>
   {{if .Confirm}}
     {{template "confirm" .Confirm}}
   {{else}}
     {{with .Session}}
     <div class="detail-actions">
+      <a class="btn btn-wide" href="{{screen "session-edit" .ID}}" hx-get="{{screen "session-edit" .ID}}" hx-target="#app" hx-push-url="true">Change setup</a>
       {{if .RemoteURL}}
         <a class="btn btn-primary btn-wide" href="{{.RemoteURL}}" target="_blank" rel="noopener noreferrer">Open in Claude</a>
       {{end}}
@@ -111,11 +116,12 @@
     </form>
     {{end}}
   {{end}}
+  </div>
 </section>
 {{end}}
 
 {{define "session-handoff"}}
-<section id="session-handoff-{{.Session.ID}}"{{if not .CanHandoff}} data-refresh="ui/fragments/handoff/{{.Session.ID}}" data-refresh-every="2000"{{end}}>
+<section id="session-handoff-{{.Session.ID}}">
   <h3 class="section-title">Hand off this session</h3>
   {{if not .CanHandoff}}<p class="row-meta">Send a message in this session to make its conversation available.</p>{{end}}
   <div class="detail-actions">
@@ -132,7 +138,7 @@
 {{end}}
 
 {{define "session-activity"}}
-<div id="session-activity-{{.ID}}" data-refresh="ui/fragments/activity/{{.ID}}" data-refresh-every="2000">
+<div id="session-activity-{{.ID}}">
   <div class="detail-head">
     <span class="dot dot-large" data-tone="{{.Tone}}" aria-hidden="true"></span>
     <div>

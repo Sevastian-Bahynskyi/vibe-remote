@@ -37,24 +37,17 @@ func (s *Server) continueClaude(ctx context.Context, source model.Session, accou
 		if s.claude.Status(slotID).Running {
 			return handoff, "Claude", nil
 		}
-		settings, settingsErr := s.store.GetAgentSettings(ctx, source.Provider, source.NativeSessionID)
-		if settingsErr != nil && !errors.Is(settingsErr, store.ErrNotFound) {
-			return failure("Could not read the source agent settings.")
-		}
-		changed := false
-		if remote.Model == "" && settings.Model != "" {
-			remote.Model = settings.Model
-			changed = true
-		}
-		if remote.Effort == "" && settings.Effort != "" {
-			remote.Effort = settings.Effort
-			changed = true
-		}
-		if changed {
-			remote, err = s.store.UpsertRemoteSession(ctx, remote)
-			if err != nil {
-				return failure("Could not update the continuation session.")
+		// A retry keeps the destination's resolved intent, even if the source changes.
+		if remote.RequestedModel == "" || remote.RequestedEffort == "" {
+			selection, selectErr := s.store.ResolveRemoteSelection(ctx, remote, model.SelectionOverride{})
+			if selectErr != nil {
+				return failure("Could not read destination agent settings.")
 			}
+			if err := s.store.SetRemoteRequestedSelection(ctx, remote.ID, selection); err != nil {
+				return failure("Could not update destination settings.")
+			}
+			remote.Model, remote.Effort = selection.Model, selection.Effort
+			remote.RequestedModel, remote.RequestedEffort = selection.Model, selection.Effort
 		}
 	}
 	if errors.Is(err, store.ErrNotFound) {
@@ -87,7 +80,11 @@ func (s *Server) continueClaude(ctx context.Context, source model.Session, accou
 			}
 		}
 		name = uniqueSessionName(truncate(name, 60), account.Email, workspace, remotes, slotID)
-		settings, settingsErr := s.store.GetAgentSettings(ctx, source.Provider, source.NativeSessionID)
+		selectionSource := model.RemoteSession{}
+		if source.Provider == model.ProviderClaude {
+			selectionSource = model.RemoteSession{AccountID: source.AccountID, WorkspacePath: source.WorkspacePath, ResumeSessionID: source.NativeSessionID}
+		}
+		settings, settingsErr := s.store.ResolveRemoteSelection(ctx, selectionSource, model.SelectionOverride{})
 		if settingsErr != nil && !errors.Is(settingsErr, store.ErrNotFound) {
 			return failure("Could not read the source agent settings.")
 		}
@@ -103,7 +100,7 @@ func (s *Server) continueClaude(ctx context.Context, source model.Session, accou
 			return failure("Could not save the continuation checkpoint.")
 		}
 		remote, err = s.store.UpsertRemoteSession(ctx, model.RemoteSession{ID: slotID, Name: name, AccountID: account.ID,
-			WorkspaceID: workspace.ID, WorkspacePath: workspace.Path, Model: settings.Model, Effort: settings.Effort,
+			WorkspaceID: workspace.ID, WorkspacePath: workspace.Path, Model: settings.Model, Effort: settings.Effort, RequestedModel: settings.Model, RequestedEffort: settings.Effort,
 			Desired: model.DesiredStopped})
 		if err != nil {
 			_ = checkpoint.RemoveContinuation(s.layout.Root, slotID)

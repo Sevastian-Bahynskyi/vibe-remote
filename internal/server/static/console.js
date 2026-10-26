@@ -72,7 +72,12 @@
         if (chunk.data) {
           var bytes = Uint8Array.from(atob(chunk.data), function (character) {return character.charCodeAt(0);});
           if (bytes.length !== chunk.end - chunk.start) throw new Error('Console output was interrupted. Close and reopen this console.');
-          await new Promise(function (resolve) {terminal.write(bytes, resolve);});
+          await new Promise(function (resolve) {
+            function finish() { controller.signal.removeEventListener('abort', finish); resolve(); }
+            controller.signal.addEventListener('abort', finish, {once: true});
+            terminal.write(bytes, finish);
+          });
+          if (stopped || !element.isConnected) return;
         }
         cursor = chunk.end;
         if (first) {
@@ -127,7 +132,7 @@
     enable(false);
     element.addEventListener('toggle', toggle);
     element.addEventListener('click', click);
-    active.set(element, {dispose: dispose, poll: poll});
+    active.set(element, {dispose: dispose, poll: poll, hasTerminal: function () { return terminal !== null && !stopped; }});
     start();
   }
 
@@ -136,7 +141,19 @@
     document.querySelectorAll('[data-console]').forEach(setup);
   }
 
+  function disposeAll() { active.forEach(function (entry) { entry.dispose(); }); }
+  document.addEventListener('htmx:beforeCleanupElement', function (event) {
+    active.forEach(function (entry, element) { if (event.target === element || event.target.contains(element)) entry.dispose(); });
+  });
   document.addEventListener('htmx:afterSwap', scan);
+  document.addEventListener('htmx:historyRestore', function () { disposeAll(); scan(); });
+  window.addEventListener('pagehide', disposeAll);
+  window.addEventListener('pageshow', scan);
+  window.vibeRemoteConsoles = function () {
+    var terminals = 0;
+    active.forEach(function (entry) { if (entry.hasTerminal()) terminals++; });
+    return {records: active.size, terminals: terminals};
+  };
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') active.forEach(function (console) {console.poll();});
   });

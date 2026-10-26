@@ -62,6 +62,8 @@ func run(arguments []string) error {
 		return install.Install(layout, executable)
 	case "account-add":
 		return accountAdd(layout, arguments[1:])
+	case "account-repair":
+		return accountLogin(layout, append([]string{"--repair"}, arguments[1:]...))
 	case "account-login":
 		return accountLogin(layout, arguments[1:])
 	case "hook":
@@ -86,6 +88,11 @@ func serve(layout paths.Layout) error {
 	if err := paths.Ensure(layout); err != nil {
 		return err
 	}
+	ownership, err := claude.AcquireOwnership(layout.Root)
+	if err != nil {
+		return err
+	}
+	defer ownership.Close()
 	repository, err := store.Open(layout.Database)
 	if err != nil {
 		return err
@@ -96,6 +103,9 @@ func serve(layout paths.Layout) error {
 		return err
 	}
 	defer manager.Close(context.Background())
+	if err := manager.RecoverWorkers(ownership); err != nil {
+		fmt.Fprintln(os.Stderr, "vibe-remote: worker recovery requires repair")
+	}
 	service, err := server.New(server.Options{Store: repository, Claude: manager, Layout: layout, Binary: layout.Binary})
 	if err != nil {
 		return err
@@ -138,6 +148,7 @@ func serve(layout paths.Layout) error {
 func accountAdd(layout paths.Layout, arguments []string) error {
 	flags := flag.NewFlagSet("account-add", flag.ContinueOnError)
 	email := flags.String("email", "", "Claude account email")
+	jobID := flags.String("job", "", "setup job identifier")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -152,15 +163,24 @@ func accountAdd(layout paths.Layout, arguments []string) error {
 		return err
 	}
 	defer repository.Close()
-	manager, err := claude.New(layout.Root, repository, claude.Options{})
+	manager, err := claude.NewAccounts(layout.Root, repository, claude.AuthOptions{})
 	if err != nil {
 		return err
 	}
-	account, err := manager.Add(context.Background(), *email)
+	account, err := runSetupJob(repository, *jobID, func(ctx context.Context) (model.Account, error) {
+		account, err := manager.Add(ctx, *email)
+		if err != nil {
+			return account, err
+		}
+		if err := install.InstallClaudeHooks(account.ProfileDir, layout.Binary); err != nil {
+			return account, err
+		}
+		if _, err := manager.ReconcileProfile(ctx, account.ID); err != nil {
+			return account, err
+		}
+		return account, nil
+	})
 	if err != nil {
-		return err
-	}
-	if err := install.InstallClaudeHooks(account.ProfileDir, layout.Binary); err != nil {
 		return err
 	}
 	fmt.Printf("Authenticated Claude account %s.\n", account.Email)
@@ -170,6 +190,8 @@ func accountAdd(layout paths.Layout, arguments []string) error {
 func accountLogin(layout paths.Layout, arguments []string) error {
 	flags := flag.NewFlagSet("account-login", flag.ContinueOnError)
 	id := flags.String("id", "", "Claude account ID")
+	repair := flags.Bool("repair", false, "repair the existing profile")
+	jobID := flags.String("job", "", "setup job identifier")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -181,15 +203,31 @@ func accountLogin(layout paths.Layout, arguments []string) error {
 		return err
 	}
 	defer repository.Close()
-	manager, err := claude.New(layout.Root, repository, claude.Options{})
+	manager, err := claude.NewAccounts(layout.Root, repository, claude.AuthOptions{})
 	if err != nil {
 		return err
 	}
-	account, err := manager.Login(context.Background(), *id)
+	account, err := runSetupJob(repository, *jobID, func(ctx context.Context) (model.Account, error) {
+		var account model.Account
+		var err error
+		if *repair {
+			account, err = manager.Refresh(ctx, *id)
+		}
+		if !*repair || err != nil {
+			account, err = manager.Login(ctx, *id)
+		}
+		if err != nil {
+			return account, err
+		}
+		if err := install.InstallClaudeHooks(account.ProfileDir, layout.Binary); err != nil {
+			return account, err
+		}
+		if _, err := manager.ReconcileProfile(ctx, account.ID); err != nil {
+			return account, err
+		}
+		return account, nil
+	})
 	if err != nil {
-		return err
-	}
-	if err := install.InstallClaudeHooks(account.ProfileDir, layout.Binary); err != nil {
 		return err
 	}
 	fmt.Printf("Authenticated Claude account %s.\n", account.Email)

@@ -14,56 +14,153 @@
   var THEME_KEY = 'vibe-remote-theme';
   var DEFAULT_REFRESH_MS = 20000;
 
-  ['gesturestart', 'gesturechange'].forEach(function (type) {
-    document.addEventListener(type, function (event) {
-      if (window.matchMedia('(pointer: coarse)').matches) event.preventDefault();
-    }, { passive: false });
-  });
+  var regions = new Map();
+  var generation = 0;
+  var dirtyForms = new WeakSet();
+  var formSequence = 0;
+  var requests = 0;
+  var obsolete = 0;
+  var manual = null;
 
-  // ---- periodic refresh -------------------------------------------------
-  //
-  // htmx's own `every 20s` trigger would do this, but pausing it on a hidden
-  // tab needs an event filter, and those are compiled with the Function
-  // constructor, which the CSP forbids. A timer here is smaller than the
-  // workaround would be, and it matches what the old dashboard did.
-  //
-  // Only regions that carry data-refresh are polled, and only Home has any, so
-  // a refresh can never land on a form or a confirmation the user is partway
-  // through. That is what makes this safe, rather than any guard below.
+  try {
+    if (!window.localStorage.getItem('vibe-remote-history-cleared-v1')) {
+      window.localStorage.removeItem('htmx-history-cache');
+      window.localStorage.setItem('vibe-remote-history-cleared-v1', '1');
+    }
+  } catch (error) {}
 
   function refreshable() {
     return Array.prototype.slice.call(document.querySelectorAll('[data-refresh]'));
   }
 
-  function due(element, now) {
-    var every = parseInt(element.dataset.refreshEvery, 10) || DEFAULT_REFRESH_MS;
-    var last = parseInt(element.dataset.refreshedAt, 10) || 0;
-    return now - last >= every;
+  function synchronize() {
+    var elements = refreshable();
+    regions.forEach(function (state, id) {
+      var element = document.getElementById(id);
+      if (!element || !element.dataset.refresh || element.dataset.refresh !== state.url) {
+        if (state.controller) state.controller.abort();
+        regions.delete(id);
+      }
+    });
+    elements.forEach(function (element) {
+      if (!regions.has(element.id)) regions.set(element.id, {url: element.dataset.refresh, last: Date.now(), controller: null});
+    });
+    return elements;
+  }
+
+  function invalidate() {
+    generation++;
+    regions.forEach(function (state) { if (state.controller) state.controller.abort(); });
+    regions.clear();
+    if (manual) manual.abort();
+    manual = null;
+  }
+
+  function preserveControls(element, html, preserveForms) {
+    var parsed = new DOMParser().parseFromString(html, 'text/html');
+    var controls = element.querySelector('[data-testid="confirm"]');
+    if (controls) {
+      var old = controls.closest('[data-session-controls]');
+      var next = old && parsed.getElementById(old.id);
+      if (next) next.setAttribute('hx-preserve', 'true');
+    }
+    if (preserveForms) {
+      var candidates = Array.prototype.slice.call(parsed.querySelectorAll('form'));
+      element.querySelectorAll('form').forEach(function (form) {
+        if (!dirtyForms.has(form)) return;
+        var action = form.getAttribute('hx-post') || form.getAttribute('action') || '';
+        var next = candidates.find(function (candidate) { return (candidate.getAttribute('hx-post') || candidate.getAttribute('action') || '') === action; });
+        if (!next) return;
+        if (!form.id) form.id = 'refresh-form-' + (++formSequence);
+        next.id = form.id;
+        next.setAttribute('hx-preserve', 'true');
+        candidates.splice(candidates.indexOf(next), 1);
+      });
+    }
+    return parsed.body.innerHTML;
+  }
+
+  async function poll(element, state) {
+    var version = generation;
+    var controller = new AbortController();
+    state.controller = controller;
+    requests++;
+    try {
+      var response = await fetch(state.url, {headers: {'X-Vibe-Remote': '1', 'HX-Request': 'true'}, cache: 'no-store', signal: controller.signal});
+      if (!response.ok) throw new Error('Refresh failed. Try Refresh again.');
+      var html = await response.text();
+      if (version !== generation || regions.get(element.id) !== state || document.getElementById(element.id) !== element || document.visibilityState !== 'visible') { obsolete++; return; }
+      if (Array.prototype.some.call(element.querySelectorAll('form'), function (form) { return dirtyForms.has(form); })) return;
+      if (element.contains(document.activeElement) && document.activeElement.matches('a,button,input,select,textarea,[tabindex]') && !document.activeElement.closest('[data-console]')) return;
+      var prepared = preserveControls(element, html, false);
+      window.htmx.swap(element, prepared, {swapStyle: 'outerHTML', settleDelay: 0});
+    } catch (error) {
+      if (error.name !== 'AbortError' && version === generation && !controller.signal.aborted) showNotice(error.message);
+    } finally {
+      if (state.controller === controller) { state.controller = null; state.last = Date.now(); }
+      synchronize();
+    }
   }
 
   function refresh(force) {
-    if (document.visibilityState !== 'visible') return;
-    // Never pull the ground out from under someone who is typing.
-    if (document.activeElement && document.activeElement.closest('form')) return;
-    var now = Date.now();
-    refreshable().forEach(function (element) {
-      if (!force && !due(element, now)) return;
-      element.dataset.refreshedAt = String(now);
-      window.htmx.ajax('GET', element.dataset.refresh, {
-        target: '#' + element.id,
-        swap: 'outerHTML',
-      });
+    if (manual || document.visibilityState !== 'visible') return;
+    synchronize().forEach(function (element) {
+      var state = regions.get(element.id);
+      var every = parseInt(element.dataset.refreshEvery, 10) || DEFAULT_REFRESH_MS;
+      if (state.controller || (!force && Date.now() - state.last < every)) return;
+      if (element.contains(document.activeElement) && document.activeElement.matches('a,button,input,select,textarea,[tabindex]') && !document.activeElement.closest('[data-console]')) return;
+      if (Array.prototype.some.call(element.querySelectorAll('form'), function (form) { return dirtyForms.has(form); })) return;
+      poll(element, state);
     });
   }
 
-  // The tick only decides whether anything is due; data-refresh-every decides
-  // whether a request is actually made. Ticking every second costs one query
-  // selector and keeps a region that asked for a fast cadence — a session card
-  // waiting on Claude to register — close to the rate it asked for, instead of
-  // rounding it up to the tick.
-  window.setInterval(function () { refresh(false); }, 1000);
-  document.addEventListener('visibilitychange', function () { refresh(false); });
+  async function refreshScreen() {
+    if (manual || document.visibilityState !== 'visible') return;
+    invalidate();
+    var controller = new AbortController();
+    manual = controller;
+    var version = generation;
+    var app = document.getElementById('app');
+    var focused = document.activeElement;
+    var selection = focused && typeof focused.selectionStart === 'number' ? [focused.selectionStart, focused.selectionEnd] : null;
+    requests++;
+    try {
+      var response = await fetch(window.location.href, {headers: {'X-Vibe-Remote': '1', 'HX-Request': 'true'}, cache: 'no-store', signal: controller.signal});
+      if (!response.ok) throw new Error('Refresh failed. Try again.');
+      var html = await response.text();
+      if (version !== generation || manual !== controller || !app.isConnected) return;
+      window.htmx.swap(app, preserveControls(app, html, true), {swapStyle: 'innerHTML', settleDelay: 0});
+      if (focused && focused.isConnected) {
+        focused.focus({preventScroll: true});
+        if (selection) focused.setSelectionRange(selection[0], selection[1]);
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError' && version === generation && !controller.signal.aborted) showNotice(error.message);
+    } finally {
+      if (manual === controller) manual = null;
+      synchronize();
+    }
+  }
+
+  document.addEventListener('input', function (event) { var form = event.target.closest('form'); if (form) dirtyForms.add(form); });
+  document.addEventListener('change', function (event) { var form = event.target.closest('form'); if (form) dirtyForms.add(form); });
+  document.addEventListener('htmx:beforeRequest', function () { invalidate(); });
+  document.addEventListener('htmx:afterSwap', synchronize);
+  document.addEventListener('htmx:historyRestore', function () { invalidate(); synchronize(); refresh(true); });
+  window.addEventListener('pagehide', invalidate);
+  window.addEventListener('pageshow', function () { synchronize(); refresh(true); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') invalidate();
+    else { synchronize(); refresh(true); }
+  });
   window.addEventListener('online', function () { refresh(true); });
+  window.setInterval(function () { refresh(false); }, 500);
+  window.vibeRemotePolling = function () {
+    var inFlight = manual ? 1 : 0;
+    regions.forEach(function (state) { if (state.controller) inFlight++; });
+    return {regions: regions.size, inFlight: inFlight, requests: requests, obsoleteResponses: obsolete};
+  };
+  synchronize();
 
   // ---- delegated clicks -------------------------------------------------
   // One listener on the document, so it keeps working across every htmx swap
@@ -72,7 +169,7 @@
   document.addEventListener('click', function (event) {
     var refreshButton = event.target.closest('[data-refresh-now]');
     if (refreshButton) {
-      refresh(true);
+      refreshScreen();
       return;
     }
 

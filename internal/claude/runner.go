@@ -174,6 +174,9 @@ func (p *execProcess) Ready() <-chan struct{} { return p.ready }
 func (p *execProcess) ReadyError() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.diagnostic != "" {
+		return errors.New(p.diagnostic)
+	}
 	return p.readyErr
 }
 
@@ -245,7 +248,10 @@ type readinessWriter struct {
 	buffer  string
 }
 
+const modelUnavailableMessage = "The requested Claude model is unavailable. Choose an available model before restarting."
+
 var remoteControlURLPattern = regexp.MustCompile(`https://claude(?:\.ai|\.com)/code/[^\s\x1b]+`)
+var terminalControlPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]|\x1b\\][^\x07]*(?:\x07|\x1b\\\\)")
 
 func extractRemoteControlURL(output string) string {
 	for _, match := range remoteControlURLPattern.FindAllString(output, -1) {
@@ -290,6 +296,19 @@ func (w *readinessWriter) Write(data []byte) (int, error) {
 		w.buffer = w.buffer[len(w.buffer)-8192:]
 	}
 	plain := strings.ToLower(w.buffer)
+	compact := strings.Join(strings.Fields(terminalControlPattern.ReplaceAllString(plain, "")), "")
+	for _, fragment := range []string{"issuewiththeselectedmodel", "run/modeltopickadifferentmodel", "maynotexistoryoumaynothaveaccesstoit"} {
+		if strings.Contains(compact, fragment) {
+			w.process.setDiagnostic(modelUnavailableMessage)
+			return len(data), nil
+		}
+	}
+	for _, fragment := range []string{"there's an issue with the selected model", "invalid model name", "model is not available", "model is unavailable", "model_not_found"} {
+		if strings.Contains(plain, fragment) {
+			w.process.setDiagnostic(modelUnavailableMessage)
+			return len(data), nil
+		}
+	}
 	for fragment, message := range map[string]string{
 		"trust this folder":                 "workspace approval is required locally",
 		"workspace trust":                   "workspace approval is required locally",

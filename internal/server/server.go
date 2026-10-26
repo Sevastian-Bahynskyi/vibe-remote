@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sevastian-Bahynskyi/vibe-remote/internal/checkpoint"
@@ -33,14 +34,16 @@ import (
 var assets embed.FS
 
 type Server struct {
-	store   *store.Store
-	claude  *claude.Manager
-	layout  paths.Layout
-	binary  string
-	http    *http.Server
-	started time.Time
-	views   *views
-	opMu    sync.Mutex
+	requestCount atomic.Uint64
+	launchSetup  func(email, accountID, jobID string) error
+	store        *store.Store
+	claude       *claude.Manager
+	layout       paths.Layout
+	binary       string
+	http         *http.Server
+	started      time.Time
+	views        *views
+	opMu         sync.Mutex
 
 	// System health shells out to pmset and tailscale, so it is cached briefly:
 	// the dashboard asks for it on a timer and a burst of requests must not turn
@@ -75,6 +78,12 @@ func New(options Options) (*Server, error) {
 		store: options.Store, claude: options.Claude, layout: options.Layout,
 		binary: options.Binary, started: time.Now().UTC(), views: parsed,
 	}
+	server.launchSetup = func(email, accountID, jobID string) error {
+		if accountID == "" {
+			return launchAccountLogin(server.binary, email, jobID)
+		}
+		return launchAccountRelogin(server.binary, accountID, jobID)
+	}
 	mux := http.NewServeMux()
 	staticFS, err := fs.Sub(assets, "static")
 	if err != nil {
@@ -83,8 +92,18 @@ func New(options Options) (*Server, error) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /{$}", server.dashboard)
 	mux.HandleFunc("GET /api/state", server.state)
+	mux.HandleFunc("GET /api/diagnostics", server.diagnostics)
+	mux.HandleFunc("GET /api/accounts/{id}/readiness", server.accountReadiness)
 	mux.HandleFunc("GET /api/remote-sessions/{id}/console", server.readTerminal)
 	mux.HandleFunc("POST /api/remote-sessions/{id}/console", server.updateTerminal)
+	mux.HandleFunc("GET /api/setup-jobs/{id}", server.setupStatus)
+	mux.HandleFunc("POST /api/setup-jobs/{id}/cancel", server.setupAction("cancel", false))
+	mux.HandleFunc("POST /api/setup-jobs/{id}/retry", server.setupAction("retry", false))
+	mux.HandleFunc("POST /api/accounts/{id}/repair", server.repairAccount(false))
+	mux.HandleFunc("GET /ui/fragments/accounts", server.uiFragmentAccounts)
+	mux.HandleFunc("POST /ui/setup-jobs/{id}/cancel", server.setupAction("cancel", true))
+	mux.HandleFunc("POST /ui/setup-jobs/{id}/retry", server.setupAction("retry", true))
+	mux.HandleFunc("POST /ui/accounts/{id}/repair", server.repairAccount(true))
 	mux.HandleFunc("POST /api/accounts", server.addAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", server.removeAccount)
 	mux.HandleFunc("POST /api/remote-sessions", server.createRemoteSession)
@@ -135,7 +154,7 @@ func New(options Options) (*Server, error) {
 	mux.HandleFunc("POST /ui/retention", server.uiRetention)
 	server.http = &http.Server{
 		Addr:              paths.ListenAddr,
-		Handler:           server.securityHeaders(server.requireMutationHeader(mux)),
+		Handler:           server.countRequests(server.securityHeaders(server.requireMutationHeader(mux))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		// Starting a session no longer waits for Claude to register Remote
@@ -369,12 +388,14 @@ func (s *Server) addAccount(response http.ResponseWriter, request *http.Request)
 		writeError(response, errors.New("a valid email is required"), http.StatusBadRequest)
 		return
 	}
-	if err := s.addAccountOp(body.Email); err != nil {
+	job, err := s.addAccountOp(body.Email)
+	if err != nil {
 		writeError(response, err, statusOf(err))
 		return
 	}
 	writeJSON(response, http.StatusAccepted, map[string]any{
-		"message": "Official Claude sign-in opened on this Mac. The account will appear after authentication completes.",
+		"message": "Official Claude sign-in opened on this Mac. Follow setup status for completion.",
+		"jobId":   job.ID, "job": job,
 	})
 }
 
@@ -392,6 +413,8 @@ func (s *Server) removeAccount(response http.ResponseWriter, request *http.Reque
 // explicit empty string is the deliberate "new conversation" reset. Without that
 // distinction, renaming a slot would silently detach its live thread.
 type remoteSessionRequest struct {
+	Model           *string `json:"model"`
+	Effort          *string `json:"effort"`
 	Name            string  `json:"name"`
 	AccountID       string  `json:"accountId"`
 	WorkspaceID     string  `json:"workspaceId"`
@@ -412,7 +435,7 @@ func (s *Server) createRemoteSession(response http.ResponseWriter, request *http
 	}
 	writeJSON(response, http.StatusCreated, map[string]any{
 		"remoteSession": remote,
-		"message":       remote.Name + " is ready for Claude Remote Control.",
+		"message":       remote.Name + " is starting. Open the session to follow connection progress.",
 	})
 }
 
@@ -559,6 +582,15 @@ func (s *Server) startRemote(ctx context.Context, remote model.RemoteSession, fo
 	if err := install.InstallClaudeHooks(account.ProfileDir, s.binary); err != nil {
 		return err
 	}
+	selection, err := s.store.ResolveRemoteSelection(ctx, remote, model.SelectionOverride{})
+	if err != nil {
+		return err
+	}
+	if err := s.store.SetRemoteRequestedSelection(ctx, remote.ID, selection); err != nil {
+		return err
+	}
+	remote.RequestedModel, remote.RequestedEffort = selection.Model, selection.Effort
+	remote.Model, remote.Effort = selection.Model, selection.Effort
 	spec := workerSpec(remote)
 	spec.Force = force
 	return s.claude.Activate(ctx, spec)
@@ -871,13 +903,13 @@ func validateWorkspace(input string) (string, error) {
 	return clean, nil
 }
 
-func launchAccountLogin(binary, email string) error {
-	command := shellQuote(binary) + " account-add --email " + shellQuote(strings.TrimSpace(email)) + "; printf '\\nSign-in finished. You may close this window.\\n'; read -k 1"
+func launchAccountLogin(binary, email, jobID string) error {
+	command := shellQuote(binary) + " account-add --email " + shellQuote(strings.TrimSpace(email)) + " --job " + shellQuote(jobID) + "; printf '\\nSign-in finished. You may close this window.\\n'; read -k 1"
 	return launchTerminalCommand(command)
 }
 
-func launchAccountRelogin(binary, accountID string) error {
-	command := shellQuote(binary) + " account-login --id " + shellQuote(accountID) + "; printf '\\nSign-in finished. You may close this window.\\n'; read -k 1"
+func launchAccountRelogin(binary, accountID, jobID string) error {
+	command := shellQuote(binary) + " account-repair --id " + shellQuote(accountID) + " --job " + shellQuote(jobID) + "; printf '\\nSign-in finished. You may close this window.\\n'; read -k 1"
 	return launchTerminalCommand(command)
 }
 

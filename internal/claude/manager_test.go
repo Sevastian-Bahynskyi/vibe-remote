@@ -143,7 +143,7 @@ func TestActivateStartsRemoteControlAndExportsAccountID(t *testing.T) {
 		t.Fatalf("Activate() error = %v", err)
 	}
 	command := runner.startAt(t, 0)
-	if got := strings.Join(command.Args, " "); got != "--permission-mode bypassPermissions --chrome --verbose --settings "+filepath.Join(manager.workerPIDDir, "slot-a.permissions.json")+" --mcp-config "+filepath.Join(manager.workerPIDDir, "slot-a.mcp.json")+" --remote-control Project A" {
+	if got := strings.Join(command.Args, " "); got != "--permission-mode bypassPermissions --chrome --verbose --model opus --effort high --settings "+filepath.Join(manager.workerPIDDir, "slot-a.permissions.json")+" --mcp-config "+filepath.Join(manager.workerPIDDir, "slot-a.mcp.json")+" --remote-control Project A" {
 		t.Fatalf("worker command = %q", got)
 	}
 	if command.Dir != workspace {
@@ -506,7 +506,7 @@ func TestActivateResumesTheRequestedConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Activate() error = %v", err)
 	}
-	want := "--permission-mode bypassPermissions --chrome --verbose --resume 9f2c1d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f --settings " + filepath.Join(manager.workerPIDDir, "slot-a.permissions.json") + " --mcp-config " + filepath.Join(manager.workerPIDDir, "slot-a.mcp.json") + " --remote-control Project"
+	want := "--permission-mode bypassPermissions --chrome --verbose --model opus --effort high --resume 9f2c1d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f --settings " + filepath.Join(manager.workerPIDDir, "slot-a.permissions.json") + " --mcp-config " + filepath.Join(manager.workerPIDDir, "slot-a.mcp.json") + " --remote-control Project"
 	if got := strings.Join(runner.startAt(t, 0).Args, " "); got != want {
 		t.Fatalf("worker command = %q, want %q", got, want)
 	}
@@ -619,7 +619,7 @@ func TestRestartResumesTheConversationTheSlotAdopted(t *testing.T) {
 		return status.Running && status.PID == 202
 	})
 
-	want := "--permission-mode bypassPermissions --chrome --verbose --resume conversation-1 --settings " + filepath.Join(manager.workerPIDDir, "slot-a.permissions.json") + " --mcp-config " + filepath.Join(manager.workerPIDDir, "slot-a.mcp.json") + " --remote-control Project"
+	want := "--permission-mode bypassPermissions --chrome --verbose --model opus --effort high --resume conversation-1 --settings " + filepath.Join(manager.workerPIDDir, "slot-a.permissions.json") + " --mcp-config " + filepath.Join(manager.workerPIDDir, "slot-a.mcp.json") + " --remote-control Project"
 	if got := strings.Join(runner.startAt(t, 1).Args, " "); got != want {
 		t.Fatalf("restart command = %q, want %q", got, want)
 	}

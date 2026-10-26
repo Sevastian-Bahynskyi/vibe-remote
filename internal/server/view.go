@@ -35,6 +35,15 @@ const (
 
 // SessionView is one live Remote Control slot as the dashboard shows it.
 type SessionView struct {
+	MemoryDirectory   string
+	MemoryConflicts   int
+	RunID             string
+	RequestedModel    string
+	RequestedEffort   string
+	ObservedModel     string
+	ObservedEffort    string
+	ObservedAt        string
+	ModelMismatch     bool
 	ActivityLines     []string
 	ActivityHelp      string
 	ID                string
@@ -91,14 +100,16 @@ func refreshCadence(sessions []SessionView) int {
 }
 
 type AccountView struct {
-	ID           string
-	Email        string
-	Status       string
-	Tone         Tone
-	SessionCount int
-	RunningCount int
-	LastError    string
-	CanStart     bool
+	SetupStatus    string
+	SetupConflicts int
+	ID             string
+	Email          string
+	Status         string
+	Tone           Tone
+	SessionCount   int
+	RunningCount   int
+	LastError      string
+	CanStart       bool
 }
 
 type WorkspaceView struct {
@@ -347,6 +358,10 @@ func buildSessionWith(
 	busy := tone == ToneBusy
 
 	view := SessionView{
+		RunID:           worker.ActivityRunID,
+		RequestedModel:  orDefault(remote.RequestedModel, "opus"),
+		RequestedEffort: orDefault(remote.RequestedEffort, "high"),
+		ObservedModel:   "Unknown", ObservedEffort: "Unknown",
 		ID:             remote.ID,
 		Name:           orDefault(remote.Name, "Unnamed session"),
 		AccountID:      remote.AccountID,
@@ -363,6 +378,15 @@ func buildSessionWith(
 		ConversationID: remote.ResumeSessionID,
 	}
 
+	view.MemoryDirectory, view.MemoryConflicts = worker.MemoryDirectory, worker.MemoryConflicts
+	if remote.ObservedAt != nil {
+		view.ObservedModel = orDefault(remote.Model, "Unknown")
+		view.ObservedEffort = orDefault(remote.Effort, "Unknown")
+		view.ObservedAt = remote.ObservedAt.Local().Format(time.RFC3339)
+		requested := strings.TrimSuffix(view.RequestedModel, "[1m]")
+		observed := strings.TrimSuffix(remote.Model, "[1m]")
+		view.ModelMismatch = requested != observed && !strings.HasPrefix(observed, "claude-"+requested+"-")
+	}
 	if account, ok := accounts[remote.AccountID]; ok {
 		view.AccountEmail = account.Email
 	} else {

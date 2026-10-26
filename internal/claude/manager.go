@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/mail"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -28,17 +27,22 @@ var (
 
 // Store is the account persistence required by Manager. Implementations can
 // adapt a broader application store without coupling this package to it.
-type Store interface {
-	BeginWorkerActivity(context.Context, string, string) error
-	EndWorkerActivity(context.Context, string, string) error
+type AccountStore interface {
 	UpsertAccount(context.Context, model.Account) (model.Account, error)
 	GetAccount(context.Context, string) (model.Account, error)
 	ListAccounts(context.Context) ([]model.Account, error)
 	DeleteAccount(context.Context, string) error
+}
+
+type Store interface {
+	AccountStore
+	BeginWorkerActivity(context.Context, string, string) error
+	EndWorkerActivity(context.Context, string, string) error
 	GetRemoteSession(context.Context, string) (model.RemoteSession, error)
 }
 
 type Options struct {
+	BaselineSource  string
 	ClaudePath      string
 	Runner          CommandRunner
 	StopTimeout     time.Duration
@@ -54,9 +58,8 @@ type Options struct {
 }
 
 type Manager struct {
+	*Accounts
 	store        Store
-	runner       CommandRunner
-	profilesRoot string
 	workerPIDDir string
 	stopTimeout  time.Duration
 	restartLimit int
@@ -65,11 +68,9 @@ type Manager struct {
 	stableWindow time.Duration
 	readyTimeout time.Duration
 	readyPoll    time.Duration
-	now          func() time.Time
-
-	opMu    sync.Mutex
-	mu      sync.RWMutex
-	workers map[string]*worker
+	opMu         sync.Mutex
+	mu           sync.RWMutex
+	workers      map[string]*worker
 }
 
 // WorkerSpec describes one Remote Control session slot to run. ID is the stable
@@ -86,20 +87,22 @@ type WorkerSpec struct {
 }
 
 type worker struct {
-	activityRunID string
-	id            string
-	account       model.Account
-	workspace     string
-	name          string
-	resume        string
-	model         string
-	effort        string
-	ctx           context.Context
-	cancel        context.CancelFunc
-	process       Process
-	done          chan struct{}
-	startedAt     time.Time
-	state         model.WorkerStatus
+	memoryDirectory string
+	memoryConflicts int
+	activityRunID   string
+	id              string
+	account         model.Account
+	workspace       string
+	name            string
+	resume          string
+	model           string
+	effort          string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	process         Process
+	done            chan struct{}
+	startedAt       time.Time
+	state           model.WorkerStatus
 }
 
 // live reports whether this worker is serving Remote Control or is on its way
@@ -131,6 +134,14 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 		return nil, err
 	}
 
+	baselineSource := options.BaselineSource
+	if baselineSource == "" && options.Runner == nil {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		baselineSource = filepath.Join(home, ".claude")
+	}
 	runner := options.Runner
 	if runner == nil {
 		// A missing Claude Code is deliberately not fatal here. It used to be,
@@ -144,10 +155,13 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 		runner = &execRunner{override: strings.TrimSpace(options.ClaudePath), runtimeDir: filepath.Join(root, "claude-runtime")}
 	}
 
+	accounts, err := NewAccounts(root, store, AuthOptions{Runner: runner, Now: options.Now, BaselineSource: baselineSource})
+	if err != nil {
+		return nil, err
+	}
 	manager := &Manager{
+		Accounts:     accounts,
 		store:        store,
-		runner:       runner,
-		profilesRoot: filepath.Join(root, "claude-profiles"),
 		workerPIDDir: filepath.Join(root, "worker-pids"),
 		stopTimeout:  valueOr(options.StopTimeout, 5*time.Second),
 		restartLimit: options.RestartLimit,
@@ -159,7 +173,6 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 		// at ~29s on a first-run profile, so keep well clear of that.
 		readyTimeout: valueOr(options.ReadyTimeout, 90*time.Second),
 		readyPoll:    valueOr(options.ReadyPoll, 250*time.Millisecond),
-		now:          options.Now,
 		workers:      make(map[string]*worker),
 	}
 	if manager.restartLimit == 0 {
@@ -171,24 +184,13 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 	if manager.maxDelay < manager.initialDelay {
 		return nil, errors.New("maximum restart backoff is shorter than initial backoff")
 	}
-	if manager.now == nil {
-		manager.now = time.Now
-	}
-	if err := os.MkdirAll(manager.profilesRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("create Claude profile root: %w", err)
-	}
 	if err := os.MkdirAll(manager.workerPIDDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create Claude worker record directory: %w", err)
 	}
-	if info, err := os.Lstat(manager.profilesRoot); err != nil {
-		return nil, fmt.Errorf("inspect Claude profile root: %w", err)
-	} else if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, fmt.Errorf("%w: Claude profile root must be a real directory", ErrInvalidPath)
+	if info, err := os.Lstat(manager.workerPIDDir); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("worker record directory must be a real private directory")
 	}
-	if err := os.Chmod(manager.profilesRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("secure Claude profile root: %w", err)
-	}
-	if err := manager.cleanupOrphan(); err != nil {
+	if err := os.Chmod(manager.workerPIDDir, 0o700); err != nil {
 		return nil, err
 	}
 	return manager, nil
@@ -196,7 +198,7 @@ func New(appDataRoot string, store Store, options Options) (*Manager, error) {
 
 // Add creates an isolated official Claude Code profile and performs Anthropic's
 // own interactive subscription login flow.
-func (m *Manager) Add(ctx context.Context, email string) (model.Account, error) {
+func (m *Accounts) Add(ctx context.Context, email string) (model.Account, error) {
 	normalizedEmail, err := normalizeEmail(email)
 	if err != nil {
 		return model.Account{}, err
@@ -243,7 +245,7 @@ func (m *Manager) Add(ctx context.Context, email string) (model.Account, error) 
 	return account, nil
 }
 
-func (m *Manager) Login(ctx context.Context, accountID string) (model.Account, error) {
+func (m *Accounts) Login(ctx context.Context, accountID string) (model.Account, error) {
 	account, err := m.account(ctx, accountID)
 	if err != nil {
 		return model.Account{}, err
@@ -259,7 +261,7 @@ func (m *Manager) Login(ctx context.Context, accountID string) (model.Account, e
 }
 
 // Refresh verifies the isolated profile using Claude's supported JSON status.
-func (m *Manager) Refresh(ctx context.Context, accountID string) (model.Account, error) {
+func (m *Accounts) Refresh(ctx context.Context, accountID string) (model.Account, error) {
 	account, err := m.account(ctx, accountID)
 	if err != nil {
 		return model.Account{}, err
@@ -267,7 +269,7 @@ func (m *Manager) Refresh(ctx context.Context, accountID string) (model.Account,
 	return m.refresh(ctx, account)
 }
 
-func (m *Manager) refresh(ctx context.Context, account model.Account) (model.Account, error) {
+func (m *Accounts) refresh(ctx context.Context, account model.Account) (model.Account, error) {
 	output, err := m.runner.Output(ctx, Command{
 		Args: []string{"auth", "status", "--json"}, Env: m.profileEnv(account),
 	})
@@ -347,6 +349,9 @@ func (m *Manager) remove(ctx context.Context, accountID string, force, deleteRec
 func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
+	if err := m.checkRecoveryRecords(spec.ID); err != nil {
+		return err
+	}
 
 	if !validSlotID(spec.ID) {
 		return fmt.Errorf("%w: invalid remote session ID", ErrInvalidPath)
@@ -363,12 +368,15 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 	if err != nil {
 		return err
 	}
+	if err := validateSettingsBoundary(filepath.Join(workspace, ".claude")); err != nil {
+		return err
+	}
 	resume, err := safeResumeID(spec.ResumeSessionID)
 	if err != nil {
 		return err
 	}
 	modelName := strings.TrimSpace(spec.Model)
-	if modelName != "" && !model.ValidModelName(modelName) {
+	if modelName != "" && !model.ValidClaudeModelName(modelName) {
 		return errors.New("invalid Claude model name")
 	}
 	effort := strings.TrimSpace(spec.Effort)
@@ -417,6 +425,7 @@ func (m *Manager) Activate(ctx context.Context, spec WorkerSpec) error {
 
 	process, err := m.start(w)
 	if err != nil {
+		m.endFailedActivity(w)
 		cancel()
 		m.mu.Lock()
 		delete(m.workers, spec.ID)
@@ -452,6 +461,11 @@ func (m *Manager) settle(w *worker, process Process) {
 	m.markFailed(w, "Claude Remote Control did not become ready: "+err.Error())
 	w.cancel()
 	if signalErr := process.Signal(os.Interrupt); signalErr != nil && !errors.Is(signalErr, os.ErrProcessDone) {
+		_ = process.Kill()
+	}
+	select {
+	case <-w.done:
+	case <-time.After(m.stopTimeout):
 		_ = process.Kill()
 	}
 }
@@ -548,7 +562,17 @@ func (m *Manager) Status(slotID string) model.WorkerStatus {
 	if w == nil {
 		return model.WorkerStatus{ID: slotID, State: "stopped"}
 	}
-	return w.state
+	return workerStatus(w)
+}
+
+func workerStatus(w *worker) model.WorkerStatus {
+	state := w.state
+	if w.process != nil {
+		if err := w.process.ReadyError(); err != nil && err.Error() == modelUnavailableMessage {
+			state.LastError = modelUnavailableMessage
+		}
+	}
+	return state
 }
 
 // Statuses reports every known slot, ordered by slot ID.
@@ -557,7 +581,7 @@ func (m *Manager) Statuses() []model.WorkerStatus {
 	defer m.mu.RUnlock()
 	statuses := make([]model.WorkerStatus, 0, len(m.workers))
 	for _, w := range m.workers {
-		statuses = append(statuses, w.state)
+		statuses = append(statuses, workerStatus(w))
 	}
 	sort.Slice(statuses, func(left, right int) bool { return statuses[left].ID < statuses[right].ID })
 	return statuses
@@ -612,8 +636,20 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) start(w *worker) (Process, error) {
+	if err := validateSettingsBoundary(w.account.ProfileDir); err != nil {
+		return nil, err
+	}
+	if err := validateSettingsBoundary(filepath.Join(w.workspace, ".claude")); err != nil {
+		return nil, err
+	}
+	if _, err := m.ReconcileProfile(w.ctx, w.account.ID); err != nil {
+		return nil, err
+	}
 	resume := m.storedResume(w)
-	modelName, effort := m.storedAgent(w)
+	modelName, effort, err := m.storedAgent(w)
+	if err != nil {
+		return nil, errors.New("could not resolve the requested Claude settings")
+	}
 	continuation, err := checkpoint.LoadContinuation(filepath.Dir(m.profilesRoot), w.id)
 	if err != nil {
 		return nil, errors.New("could not load continuation checkpoint")
@@ -627,6 +663,7 @@ func (m *Manager) start(w *worker) (Process, error) {
 	if len(servers) > 0 && credentialWorkspace != "" && credentialWorkspace != w.workspace {
 		environment = inheritSupabaseCredentials(servers, environment, direnvEnv(credentialWorkspace))
 	}
+	environment = m.enforceWorkerEnvironment(w, environment, w.activityRunID)
 	if err := checkWorkspaceSupabase(w.ctx, servers, environment); err != nil {
 		return nil, err
 	}
@@ -660,6 +697,14 @@ func (m *Manager) start(w *worker) (Process, error) {
 	if err := provisionPermissions(filepath.Join(home, ".claude", "settings.json"), permissionsPath, supabasePermissionRules(servers)...); err != nil {
 		return nil, err
 	}
+	memory, err := PrepareProjectMemory(w.ctx, filepath.Dir(m.profilesRoot), m.baselineSource, w.workspace)
+	if err != nil {
+		return nil, errors.New("shared project memory could not be prepared")
+	}
+	w.memoryDirectory, w.memoryConflicts = memory.Directory, memory.Conflicts
+	if err := applySessionMemory(permissionsPath, memory.Directory); err != nil {
+		return nil, err
+	}
 	mcpPath := filepath.Join(m.workerPIDDir, w.id+".mcp.json")
 	if err := provisionSharedMCP(filepath.Join(home, ".claude.json"), mcpPath); err != nil {
 		return nil, err
@@ -681,19 +726,20 @@ func (m *Manager) start(w *worker) (Process, error) {
 	process, err := m.runner.Start(Command{
 		Args:               arguments,
 		Dir:                w.workspace,
-		Env:                mergeEnv(environment, []string{"VIBE_REMOTE_ACTIVITY_RUN_ID=" + runID}),
+		Env:                m.enforceWorkerEnvironment(w, environment, runID),
 		ComputerUseRequest: m.computerUseRequest(w, runID),
 	})
 	if err != nil {
 		return nil, err
 	}
 	w.process = process
-	if err := m.writeWorkerPID(w.id, process.PID()); err != nil {
+	if err := m.writeWorkerPID(w, process.PID()); err != nil {
 		_ = process.Kill()
 		return nil, err
 	}
 	w.startedAt = m.now()
 	w.state = model.WorkerStatus{
+		MemoryDirectory: w.memoryDirectory, MemoryConflicts: w.memoryConflicts,
 		ActivityRunID: runID,
 		ID:            w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
 		PID: process.PID(), State: "connecting",
@@ -723,22 +769,32 @@ func (m *Manager) storedResume(w *worker) string {
 	return resume
 }
 
-func (m *Manager) storedAgent(w *worker) (string, string) {
+func (m *Manager) storedAgent(w *worker) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	stored, err := m.store.GetRemoteSession(ctx, w.id)
-	if err != nil {
-		return w.model, w.effort
+	if err == nil {
+		if resolver, ok := m.store.(interface {
+			ResolveRemoteSelection(context.Context, model.RemoteSession, model.SelectionOverride) (model.AgentSelection, error)
+		}); ok {
+			if selected, err := resolver.ResolveRemoteSelection(ctx, stored, model.SelectionOverride{}); err == nil {
+				if writer, ok := m.store.(interface {
+					SetRemoteRequestedSelection(context.Context, string, model.AgentSelection) error
+				}); ok {
+					if err := writer.SetRemoteRequestedSelection(ctx, w.id, selected); err != nil {
+						return "", "", err
+					}
+				}
+				return selected.Model, selected.Effort, nil
+			} else {
+				return "", "", err
+			}
+		}
+		selected, _ := model.ResolveClaudeSelection(model.SelectionOverride{}, model.AgentSelection{}, model.AgentSelection{Model: stored.Model, Effort: stored.Effort, RequestedModel: stored.RequestedModel, RequestedEffort: stored.RequestedEffort})
+		return selected.Model, selected.Effort, nil
 	}
-	modelName := strings.TrimSpace(stored.Model)
-	if !model.ValidModelName(modelName) {
-		modelName = w.model
-	}
-	effort := strings.TrimSpace(stored.Effort)
-	if !model.ValidEffortLevel(effort) {
-		effort = w.effort
-	}
-	return modelName, effort
+	selected, _ := model.ResolveClaudeSelection(model.SelectionOverride{}, model.AgentSelection{}, model.AgentSelection{Model: w.model, Effort: w.effort})
+	return selected.Model, selected.Effort, nil
 }
 
 func (m *Manager) supervise(w *worker, process Process) {
@@ -747,6 +803,13 @@ func (m *Manager) supervise(w *worker, process Process) {
 	delay := m.initialDelay
 	for {
 		err := process.Wait()
+		m.endFailedActivity(w)
+		if diagnostic := process.ReadyError(); diagnostic != nil && diagnostic.Error() == modelUnavailableMessage {
+			m.markFailed(w, modelUnavailableMessage)
+			w.cancel()
+			m.markStopped(w)
+			return
+		}
 		if w.ctx.Err() != nil {
 			m.markStopped(w)
 			return
@@ -781,9 +844,26 @@ func (m *Manager) supervise(w *worker, process Process) {
 					delay = minDuration(delay*2, m.maxDelay)
 					break
 				} else {
+					m.endFailedActivity(w)
+					_ = next.Signal(os.Interrupt)
+					stopped := make(chan struct{})
+					go func() { _ = next.Wait(); close(stopped) }()
+					select {
+					case <-stopped:
+					case <-time.After(m.stopTimeout):
+						_ = next.Kill()
+						<-stopped
+					}
 					lastError = "Claude Remote Control restart did not become ready: " + readyErr.Error()
+					if readyErr.Error() == modelUnavailableMessage {
+						m.markFailed(w, modelUnavailableMessage)
+						w.cancel()
+						m.markStopped(w)
+						return
+					}
 				}
 			} else {
+				m.endFailedActivity(w)
 				lastError = "Claude Remote Control restart failed: " + startErr.Error()
 			}
 			delay = minDuration(delay*2, m.maxDelay)
@@ -834,9 +914,10 @@ func (m *Manager) markRunning(w *worker, process Process) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.workers[w.id] == w && w.process == process {
+		m.rememberRuntime(process)
 		w.state = model.WorkerStatus{
-			ActivityRunID: w.activityRunID,
-			ID:            w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
+			ActivityRunID: w.activityRunID, MemoryDirectory: w.memoryDirectory, MemoryConflicts: w.memoryConflicts,
+			ID: w.id, Name: w.name, AccountID: w.account.ID, WorkspacePath: w.workspace,
 			Running: true, PID: process.PID(), State: "running",
 			RemoteURL: remoteControlURLForProcess(w.account.ProfileDir, process.PID(), process.RemoteURL()),
 		}
@@ -896,7 +977,7 @@ func validBridgeSessionID(value string) bool {
 	return true
 }
 
-func (m *Manager) account(ctx context.Context, accountID string) (model.Account, error) {
+func (m *Accounts) account(ctx context.Context, accountID string) (model.Account, error) {
 	if !validID(accountID) {
 		return model.Account{}, fmt.Errorf("%w: invalid Claude account ID", ErrInvalidPath)
 	}
@@ -910,7 +991,7 @@ func (m *Manager) account(ctx context.Context, accountID string) (model.Account,
 	return account, nil
 }
 
-func (m *Manager) profileDir(accountID string) (string, error) {
+func (m *Accounts) profileDir(accountID string) (string, error) {
 	if !validID(accountID) {
 		return "", fmt.Errorf("%w: invalid Claude account ID", ErrInvalidPath)
 	}
@@ -922,7 +1003,7 @@ func (m *Manager) profileDir(accountID string) (string, error) {
 	return target, nil
 }
 
-func (m *Manager) validateAccountProfile(account model.Account) (string, error) {
+func (m *Accounts) validateAccountProfile(account model.Account) (string, error) {
 	expected, err := m.profileDir(account.ID)
 	if err != nil {
 		return "", err
@@ -930,10 +1011,20 @@ func (m *Manager) validateAccountProfile(account model.Account) (string, error) 
 	if filepath.Clean(account.ProfileDir) != expected {
 		return "", fmt.Errorf("%w: stored Claude profile path does not match account ID", ErrInvalidPath)
 	}
+	if info, err := os.Lstat(expected); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%w: Claude profile must be a real directory", ErrInvalidPath)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := validateSettingsBoundary(expected); err != nil {
+		return "", err
+	}
 	return expected, nil
 }
 
-func (m *Manager) profileEnv(account model.Account) []string {
+func (m *Accounts) profileEnv(account model.Account) []string {
 	environment := filteredEnvironment(os.Environ())
 	return append(environment,
 		"CLAUDE_CONFIG_DIR="+account.ProfileDir,
@@ -947,10 +1038,10 @@ func (m *Manager) profileEnv(account model.Account) []string {
 // they would in an interactive shell that had cd'd there.
 func (m *Manager) workerEnv(w *worker) []string {
 	environment := mergeEnv(m.profileEnv(w.account), direnvEnv(w.workspace))
-	return mergeEnv(environment, []string{"VIBE_REMOTE_ACCOUNT_ID=" + w.account.ID, "VIBE_REMOTE_SLOT_ID=" + w.id, "VIBE_REMOTE_ACTIVITY_RUN_ID=" + w.activityRunID})
+	return m.enforceWorkerEnvironment(w, environment, w.activityRunID)
 }
 
-func (m *Manager) recordAccountError(ctx context.Context, account model.Account, message string, cause error) (model.Account, error) {
+func (m *Accounts) recordAccountError(ctx context.Context, account model.Account, message string, cause error) (model.Account, error) {
 	account.Status = model.AccountError
 	account.LastError = message
 	account.UpdatedAt = m.now().UTC()
@@ -978,7 +1069,7 @@ func (m *Manager) clearStopped(w *worker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.workers[w.id] == w {
-		m.removeWorkerPID(w.id, w.process)
+		m.removeWorkerPID(w, w.process)
 		delete(m.workers, w.id)
 	}
 }
@@ -994,12 +1085,12 @@ func (m *Manager) markStopped(w *worker) {
 	// unregistered process down, and overwriting "failed" with a bare "stopped"
 	// would throw away the only explanation the user gets.
 	if w.state.State == "failed" {
-		m.removeWorkerPID(w.id, w.process)
+		m.removeWorkerPID(w, w.process)
 		w.state.Running = false
 		w.state.PID = 0
 		return
 	}
-	m.removeWorkerPID(w.id, w.process)
+	m.removeWorkerPID(w, w.process)
 	w.state.Running = false
 	w.state.PID = 0
 	w.state.State = "stopped"
@@ -1020,7 +1111,6 @@ func (m *Manager) markFailed(w *worker, lastError string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.workers[w.id] == w {
-		m.removeWorkerPID(w.id, w.process)
 		w.state.Running = false
 		w.state.PID = 0
 		w.state.State = "failed"
@@ -1033,95 +1123,6 @@ func (m *Manager) workerPIDPath(slotID string) (string, error) {
 		return "", fmt.Errorf("%w: invalid remote session ID", ErrInvalidPath)
 	}
 	return filepath.Join(m.workerPIDDir, slotID+".pid"), nil
-}
-
-func (m *Manager) writeWorkerPID(slotID string, pid int) error {
-	path, err := m.workerPIDPath(slotID)
-	if err != nil {
-		return err
-	}
-	temporary := path + ".new"
-	if err := os.WriteFile(temporary, []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
-		return fmt.Errorf("record Claude worker PID: %w", err)
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return fmt.Errorf("activate Claude worker PID: %w", err)
-	}
-	return nil
-}
-
-func (m *Manager) removeWorkerPID(slotID string, process Process) {
-	if process == nil {
-		return
-	}
-	path, err := m.workerPIDPath(slotID)
-	if err != nil {
-		return
-	}
-	data, readErr := os.ReadFile(path)
-	if readErr == nil && strings.TrimSpace(string(data)) == fmt.Sprintf("%d", process.PID()) {
-		_ = os.Remove(path)
-	}
-}
-
-// cleanupOrphan terminates Remote Control workers left behind by a previous run
-// of this service, including the legacy single-worker record.
-func (m *Manager) cleanupOrphan() error {
-	legacy := filepath.Join(filepath.Dir(m.workerPIDDir), "worker.pid")
-	if err := m.cleanupOrphanRecord(legacy); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(m.workerPIDDir)
-	if err != nil {
-		return fmt.Errorf("read prior Claude worker records: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pid") {
-			continue
-		}
-		if err := m.cleanupOrphanRecord(filepath.Join(m.workerPIDDir, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Manager) cleanupOrphanRecord(path string) error {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read prior Claude worker PID: %w", err)
-	}
-	pid := 0
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil || pid <= 1 {
-		return errors.New("invalid prior Claude worker PID record")
-	}
-	command, commandErr := exec.Command("/bin/ps", "-p", fmt.Sprintf("%d", pid), "-o", "command=").Output()
-	if commandErr == nil {
-		text := string(command)
-		if strings.Contains(text, "claude") && strings.Contains(text, "remote-control") {
-			process, findErr := os.FindProcess(pid)
-			if findErr == nil {
-				_ = process.Signal(syscall.SIGTERM)
-				deadline := time.Now().Add(3 * time.Second)
-				for time.Now().Before(deadline) {
-					if signalErr := process.Signal(syscall.Signal(0)); signalErr != nil {
-						break
-					}
-					time.Sleep(50 * time.Millisecond)
-				}
-				if signalErr := process.Signal(syscall.Signal(0)); signalErr == nil {
-					_ = process.Kill()
-				}
-			}
-		}
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove prior Claude worker PID: %w", err)
-	}
-	return nil
 }
 
 type authStatus struct {
@@ -1165,24 +1166,6 @@ func findEmail(value any) string {
 		}
 	}
 	return ""
-}
-
-func filteredEnvironment(input []string) []string {
-	blocked := map[string]struct{}{
-		"ANTHROPIC_API_KEY": {}, "ANTHROPIC_AUTH_TOKEN": {}, "ANTHROPIC_BASE_URL": {},
-		"CLAUDE_CODE_OAUTH_TOKEN": {}, "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": {}, "CLAUDE_CODE_OAUTH_SCOPES": {},
-		"CLAUDE_CODE_USE_BEDROCK": {}, "CLAUDE_CODE_USE_VERTEX": {}, "CLAUDE_CODE_USE_FOUNDRY": {},
-		"CLAUDE_CONFIG_DIR": {}, "VIBE_REMOTE_ACCOUNT_ID": {}, "VIBE_REMOTE_SLOT_ID": {}, "VIBE_REMOTE_ACTIVITY_RUN_ID": {},
-	}
-	result := make([]string, 0, len(input))
-	for _, item := range input {
-		key, _, found := strings.Cut(item, "=")
-		if _, skip := blocked[key]; found && skip {
-			continue
-		}
-		result = append(result, item)
-	}
-	return result
 }
 
 func safeRoot(input string) (string, error) {

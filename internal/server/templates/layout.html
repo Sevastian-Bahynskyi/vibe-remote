@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <meta name="vibe-style-nonce" content="{{.StyleNonce}}">
     <meta name="theme-color" content="#f5f6f8">
@@ -12,7 +12,7 @@
          just under the server's 45s write timeout so a slow request fails
          cleanly rather than as a truncated connection; starting a session no
          longer waits on Claude registering, so nothing legitimately runs long. -->
-    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"selfRequestsOnly":true,"timeout":40000,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"historyCacheSize":0,"selfRequestsOnly":true,"timeout":40000,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
     <title>{{if .Title}}{{.Title}} · {{end}}Vibe Remote</title>
     <link rel="stylesheet" href="static/styles.css">
     <link rel="stylesheet" href="static/vendor/xterm-6.0.0.css">
@@ -22,7 +22,7 @@
     <script src="static/vendor/xterm-6.0.0.js" defer></script>
     <script src="static/console.js" defer></script>
   </head>
-  <body hx-headers='{"X-Vibe-Remote":"1"}'>
+  <body hx-history="false" hx-headers='{"X-Vibe-Remote":"1"}'>
     <a class="skip-link" href="#app">Skip to content</a>
     {{template "topbar" .}}
     <div id="notice" class="notice-host" role="status" aria-live="polite"></div>

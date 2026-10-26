@@ -1,0 +1,2865 @@
+{
+  "complete": true,
+  "startedAt": "2026-10-26T10:31:04.384Z",
+  "durationSeconds": 1800.061,
+  "warmupSeconds": 60,
+  "browserVersion": "155.0.8059.86",
+  "retainedHeap": {
+    "first": 4480420,
+    "last": 5013088,
+    "minimum": 4478776,
+    "maximum": 5013088
+  },
+  "detachedTrees": {
+    "first": 16,
+    "last": 16,
+    "maximum": 16
+  },
+  "samples": [
+    {
+      "elapsedSeconds": 8.72,
+      "heap": {
+        "usedSize": 4480420,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1359048,
+        "backingStorageSize": 635869
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 14,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 14,
+        "heapAllocBytes": 10428328,
+        "heapObjects": 159214,
+        "requests": 167,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40416,
+        "workerRssKiB": 2192
+      }
+    },
+    {
+      "elapsedSeconds": 38.578,
+      "heap": {
+        "usedSize": 4534288,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 902224,
+        "backingStorageSize": 635869
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 19,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 8491080,
+        "heapObjects": 110601,
+        "requests": 214,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40512,
+        "workerRssKiB": 2192
+      }
+    },
+    {
+      "elapsedSeconds": 68.576,
+      "heap": {
+        "usedSize": 4596324,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 929664,
+        "backingStorageSize": 635880
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 24,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 11864072,
+        "heapObjects": 189474,
+        "requests": 261,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40592,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 98.576,
+      "heap": {
+        "usedSize": 4655428,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 957184,
+        "backingStorageSize": 635895
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 29,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 9339600,
+        "heapObjects": 136131,
+        "requests": 310,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40656,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 128.558,
+      "heap": {
+        "usedSize": 4673148,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 986264,
+        "backingStorageSize": 635895
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 34,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 12851352,
+        "heapObjects": 221259,
+        "requests": 357,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40528,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 158.574,
+      "heap": {
+        "usedSize": 4691768,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1008448,
+        "backingStorageSize": 635895
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 39,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 11963456,
+        "heapObjects": 194184,
+        "requests": 404,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40624,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 188.547,
+      "heap": {
+        "usedSize": 4478776,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1003568,
+        "backingStorageSize": 635580
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 44,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 12561496,
+        "heapObjects": 200321,
+        "requests": 451,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40672,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 218.588,
+      "heap": {
+        "usedSize": 4735600,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1049680,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 49,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 11482056,
+        "heapObjects": 183461,
+        "requests": 498,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40384,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 248.59,
+      "heap": {
+        "usedSize": 4760292,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1475840,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 54,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7002688,
+        "heapObjects": 80243,
+        "requests": 545,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40528,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 278.587,
+      "heap": {
+        "usedSize": 4768520,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1108632,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 59,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 6951704,
+        "heapObjects": 77751,
+        "requests": 593,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40512,
+        "workerRssKiB": 2224
+      }
+    },
+    {
+      "elapsedSeconds": 308.566,
+      "heap": {
+        "usedSize": 4777080,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1128128,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 64,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 11311072,
+        "heapObjects": 176271,
+        "requests": 641,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40080,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 338.564,
+      "heap": {
+        "usedSize": 4783972,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1150240,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 69,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 9955744,
+        "heapObjects": 148050,
+        "requests": 689,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 39680,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 368.567,
+      "heap": {
+        "usedSize": 4786088,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1547304,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 74,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 9354672,
+        "heapObjects": 137660,
+        "requests": 736,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 39696,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 398.612,
+      "heap": {
+        "usedSize": 4789032,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1189304,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 79,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 11024936,
+        "heapObjects": 167365,
+        "requests": 783,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40288,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 428.594,
+      "heap": {
+        "usedSize": 4789760,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1207640,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 84,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 11802080,
+        "heapObjects": 190071,
+        "requests": 834,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40352,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 458.595,
+      "heap": {
+        "usedSize": 4797624,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1224488,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 89,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 8816952,
+        "heapObjects": 123563,
+        "requests": 881,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40368,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 488.589,
+      "heap": {
+        "usedSize": 4798336,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1241520,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 94,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 8162072,
+        "heapObjects": 102920,
+        "requests": 928,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40832,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 518.551,
+      "heap": {
+        "usedSize": 4803004,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1232960,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 99,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 14,
+        "heapAllocBytes": 11263000,
+        "heapObjects": 167431,
+        "requests": 976,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40896,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 548.59,
+      "heap": {
+        "usedSize": 4823020,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1275680,
+        "backingStorageSize": 635571
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 104,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7446224,
+        "heapObjects": 91044,
+        "requests": 1023,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40960,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 578.574,
+      "heap": {
+        "usedSize": 4838492,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1633312,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 109,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 10202304,
+        "heapObjects": 151524,
+        "requests": 1071,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40992,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 608.604,
+      "heap": {
+        "usedSize": 4845752,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1309944,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 114,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 11813872,
+        "heapObjects": 191753,
+        "requests": 1118,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41008,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 638.605,
+      "heap": {
+        "usedSize": 4846888,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1711792,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 119,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 12290696,
+        "heapObjects": 204439,
+        "requests": 1169,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41040,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 668.582,
+      "heap": {
+        "usedSize": 4859536,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1353088,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 124,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7635888,
+        "heapObjects": 90968,
+        "requests": 1216,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41312,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 698.597,
+      "heap": {
+        "usedSize": 4883992,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1394168,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 129,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 11844272,
+        "heapObjects": 190244,
+        "requests": 1263,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40304,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 728.581,
+      "heap": {
+        "usedSize": 4891572,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1410832,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 134,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 12500064,
+        "heapObjects": 209683,
+        "requests": 1310,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40832,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 758.58,
+      "heap": {
+        "usedSize": 4891176,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1428320,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 139,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7028232,
+        "heapObjects": 77831,
+        "requests": 1360,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41296,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 788.579,
+      "heap": {
+        "usedSize": 4898176,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1444888,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 144,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 9424888,
+        "heapObjects": 133929,
+        "requests": 1407,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41344,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 818.582,
+      "heap": {
+        "usedSize": 4896096,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1782472,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 149,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 11975760,
+        "heapObjects": 197722,
+        "requests": 1455,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41392,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 848.592,
+      "heap": {
+        "usedSize": 4898400,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1454064,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 154,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 12467928,
+        "heapObjects": 211207,
+        "requests": 1502,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41424,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 878.577,
+      "heap": {
+        "usedSize": 4895628,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1477424,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 159,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 9837704,
+        "heapObjects": 143583,
+        "requests": 1550,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41440,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 908.592,
+      "heap": {
+        "usedSize": 4905096,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1509712,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 164,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 11300248,
+        "heapObjects": 178653,
+        "requests": 1597,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41360,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 938.593,
+      "heap": {
+        "usedSize": 4912424,
+        "totalSize": 5373952,
+        "embedderHeapUsedSize": 1525128,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 169,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 7811984,
+        "heapObjects": 96652,
+        "requests": 1644,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40976,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 968.589,
+      "heap": {
+        "usedSize": 4928176,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1540520,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 174,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 9300632,
+        "heapObjects": 134267,
+        "requests": 1691,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40976,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 998.588,
+      "heap": {
+        "usedSize": 4926408,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1555888,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 179,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 9526360,
+        "heapObjects": 134374,
+        "requests": 1738,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40960,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1028.603,
+      "heap": {
+        "usedSize": 4931776,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1571280,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 184,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 11125520,
+        "heapObjects": 174905,
+        "requests": 1785,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40928,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1058.619,
+      "heap": {
+        "usedSize": 4928364,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1562192,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 189,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7993008,
+        "heapObjects": 102549,
+        "requests": 1832,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40528,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1088.594,
+      "heap": {
+        "usedSize": 4936540,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1601752,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 194,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 7560952,
+        "heapObjects": 92067,
+        "requests": 1880,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41072,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1118.616,
+      "heap": {
+        "usedSize": 4935240,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1617784,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 199,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 6839024,
+        "heapObjects": 78944,
+        "requests": 1927,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41072,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1148.602,
+      "heap": {
+        "usedSize": 4938048,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1968072,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 204,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 12060920,
+        "heapObjects": 202093,
+        "requests": 1975,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41104,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1178.616,
+      "heap": {
+        "usedSize": 4935884,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 2023248,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 209,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 12353136,
+        "heapObjects": 206208,
+        "requests": 2022,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41120,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1208.614,
+      "heap": {
+        "usedSize": 4940536,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1639888,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 214,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 8570072,
+        "heapObjects": 116295,
+        "requests": 2069,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41168,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1238.601,
+      "heap": {
+        "usedSize": 4940616,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 2030688,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 219,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 12290936,
+        "heapObjects": 195931,
+        "requests": 2116,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 39808,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1268.627,
+      "heap": {
+        "usedSize": 4948916,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1782784,
+        "backingStorageSize": 635603
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 224,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 8128880,
+        "heapObjects": 104668,
+        "requests": 2163,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40656,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1298.644,
+      "heap": {
+        "usedSize": 4960352,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1776360,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 229,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7572232,
+        "heapObjects": 93705,
+        "requests": 2211,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40704,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1328.612,
+      "heap": {
+        "usedSize": 4963360,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 2164544,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 234,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 8362752,
+        "heapObjects": 113136,
+        "requests": 2259,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40736,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1358.595,
+      "heap": {
+        "usedSize": 4974076,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 2154616,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 239,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 8080680,
+        "heapObjects": 102493,
+        "requests": 2306,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40896,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1388.606,
+      "heap": {
+        "usedSize": 4975660,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1824056,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 244,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 7498504,
+        "heapObjects": 90960,
+        "requests": 2357,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40944,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1418.624,
+      "heap": {
+        "usedSize": 4972988,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 2177400,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 249,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 7667696,
+        "heapObjects": 93192,
+        "requests": 2410,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40960,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1448.608,
+      "heap": {
+        "usedSize": 4977332,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 2155696,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 254,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 8081560,
+        "heapObjects": 108498,
+        "requests": 2460,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41488,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1478.602,
+      "heap": {
+        "usedSize": 4975352,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1871912,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 259,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 11,
+        "heapAllocBytes": 8402776,
+        "heapObjects": 111169,
+        "requests": 2507,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41504,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1508.602,
+      "heap": {
+        "usedSize": 4984368,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1885600,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 264,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7335016,
+        "heapObjects": 85561,
+        "requests": 2554,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41504,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1538.667,
+      "heap": {
+        "usedSize": 4982464,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1874504,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 269,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 8948656,
+        "heapObjects": 120966,
+        "requests": 2601,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41504,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1568.665,
+      "heap": {
+        "usedSize": 4991624,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1888568,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 274,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 13,
+        "heapAllocBytes": 10728232,
+        "heapObjects": 164453,
+        "requests": 2648,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 41504,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1598.633,
+      "heap": {
+        "usedSize": 4993884,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1927080,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 279,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 10951960,
+        "heapObjects": 173803,
+        "requests": 2696,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 38656,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1628.647,
+      "heap": {
+        "usedSize": 4998360,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1940776,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 284,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 7502872,
+        "heapObjects": 89436,
+        "requests": 2743,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 39552,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1658.632,
+      "heap": {
+        "usedSize": 5003312,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 2311888,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 289,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 8898752,
+        "heapObjects": 126390,
+        "requests": 2791,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40048,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1688.614,
+      "heap": {
+        "usedSize": 5009860,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 1944024,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 294,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 11286976,
+        "heapObjects": 177530,
+        "requests": 2838,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40512,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1718.63,
+      "heap": {
+        "usedSize": 5012384,
+        "totalSize": 6160384,
+        "embedderHeapUsedSize": 2339712,
+        "backingStorageSize": 635603
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 299,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 10731112,
+        "heapObjects": 168600,
+        "requests": 2886,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 39312,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1748.612,
+      "heap": {
+        "usedSize": 5011496,
+        "totalSize": 5898240,
+        "embedderHeapUsedSize": 2344360,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 304,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 10362344,
+        "heapObjects": 158360,
+        "requests": 2934,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40320,
+        "workerRssKiB": 2240
+      }
+    },
+    {
+      "elapsedSeconds": 1778.623,
+      "heap": {
+        "usedSize": 5013088,
+        "totalSize": 5636096,
+        "embedderHeapUsedSize": 1985824,
+        "backingStorageSize": 635593
+      },
+      "dom": {
+        "documents": 1,
+        "nodes": 223,
+        "jsEventListeners": 65
+      },
+      "detachedTrees": 16,
+      "state": {
+        "history": null,
+        "consoles": {
+          "records": 0,
+          "terminals": 0
+        },
+        "polling": {
+          "regions": 2,
+          "inFlight": 0,
+          "requests": 309,
+          "obsoleteResponses": 0
+        }
+      },
+      "daemon": {
+        "goroutines": 12,
+        "heapAllocBytes": 10324960,
+        "heapObjects": 158480,
+        "requests": 2981,
+        "store": {
+          "activityRows": 0,
+          "unfinishedActivityRows": 0,
+          "agentRows": 0
+        },
+        "workers": {
+          "workers": 1,
+          "terminalBufferBytes": 1048576
+        }
+      },
+      "processes": {
+        "daemonRssKiB": 40272,
+        "workerRssKiB": 2240
+      }
+    }
+  ],
+  "requestBaseline": {
+    "/static/console.js": 1,
+    "/ui/fragments/session/synthetic": 4,
+    "/api/remote-sessions/synthetic/console": 37,
+    "/ui/fragments/accounts": 1,
+    "/ui/fragments/alerts": 1,
+    "/ui/fragments/sessions": 3
+  },
+  "counts": {
+    "/static/console.js": 1,
+    "/ui/fragments/session/synthetic": 244,
+    "/api/remote-sessions/synthetic/console": 2239,
+    "/ui/fragments/accounts": 1,
+    "/ui/fragments/alerts": 1,
+    "/ui/fragments/sessions": 63
+  },
+  "maximum": {
+    "/static/console.js": 1,
+    "/ui/fragments/session/synthetic": 1,
+    "/api/remote-sessions/synthetic/console": 2,
+    "/ui/fragments/accounts": 1,
+    "/ui/fragments/alerts": 1,
+    "/ui/fragments/sessions": 1
+  },
+  "errors": []
+}

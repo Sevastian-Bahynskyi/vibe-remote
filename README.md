@@ -25,7 +25,7 @@ Requirements:
 
 - macOS with the lid open while remote access is desired
 - Tailscale signed in on the Mac and phone
-- Claude Code 2.1.261 or newer
+- Claude Code 2.1.304 or newer (the version verified for profile plugins and model-switch hooks)
 - Codex CLI/Desktop with hooks support
 - Go 1.25 or newer to build from source
 - An Apple Development or Developer ID Application signing certificate in the macOS Keychain
@@ -62,7 +62,7 @@ Start as many sessions as you need. Each one gets a distinct Remote Control name
 
 **Move / edit** on a session card changes its account, workspace, conversation, or name and restarts it so the change takes effect. **Restart** reapplies the current settings in place. Both first request a graceful stop; if active work does not stop, the dashboard asks before forcing it, and every open checkpoint known to that worker is marked interrupted with a fresh Git snapshot before termination.
 
-At every launch, managed sessions load the `allow`, `ask`, and `deny` permission rules from `~/.claude/settings.json` through a private settings file. This shares your saved approvals across accounts without copying credentials, environment variables, hooks, or permission modes. Vibe Remote also allows `Bash(gh issue edit *)`; matching ask and deny rules still take precedence. Changes to the shared rules apply at the next session launch. Account-specific settings and project rules remain in effect. Managed sessions also approve project `.mcp.json` servers at launch, so a new profile does not stop at the MCP setup dialog; explicitly disabled servers remain disabled.
+At every launch, managed sessions load permission rules and policy fields from `~/.claude/settings.json` through a private settings file. This shares your saved approvals across accounts without copying credentials, environment variables, hooks, or permission modes. Vibe Remote also allows `Bash(gh issue edit *)`; matching ask and deny rules still take precedence. Changes to the shared rules apply at the next session launch. Account-specific settings and project rules remain in effect. Managed sessions also approve project `.mcp.json` servers at launch, so a new profile does not stop at the MCP setup dialog; explicitly disabled servers remain disabled.
 
 Removing a session stops it and forgets the slot; its captured checkpoints are kept. Sessions that were running are restored automatically when the service restarts.
 
@@ -106,7 +106,7 @@ Before launching a configured session, Vibe Remote checks that credential variab
 
 ## Shared Claude session settings
 
-Vibe Remote loads optional `~/.claude/settings.shared.json` whenever it starts a Claude workspace session. Its `env` and `hooks` fields are explicitly shared across every account profile, checkout, and worktree; ordinary global settings still contribute only permission rules. Use absolute hook script paths outside repositories, and let shared hooks check repository identity when a policy applies to one project. Keep secrets in the existing secure environment setup. Missing shared settings preserve the previous behavior; malformed settings stop the session launch. Changes take effect on the next session launch.
+Vibe Remote loads optional `~/.claude/settings.shared.json` whenever it starts a Claude workspace session. Its `env` and `hooks` fields are explicitly shared across every account profile, checkout, and worktree; ordinary global settings contribute permission rules and the approved profile baseline described below. Identical shared hooks are deduplicated. Use absolute hook script paths outside repositories, and let shared hooks check repository identity when a policy applies to one project. Keep secrets in the existing secure environment setup. Missing shared settings preserve the previous behavior; malformed settings stop the session launch. Changes take effect on the next session launch.
 
 For direct Claude sessions, register the same hooks in `~/.claude/settings.json`; for Codex, use `~/.codex/hooks.json` and review new hooks through `/hooks`. These machine-local files survive repository replacement and worktree creation.
 
@@ -162,4 +162,30 @@ go test -race ./...
 go vet ./...
 ```
 
-If launchd is killed unexpectedly, Vibe Remote records its child PID and terminates only a matching stale Claude Remote Control process before restoring the selected worker.
+If launchd is killed unexpectedly, the next daemon first acquires the exclusive installation lock. It recovers only workers whose private PID/run/account record and process identity match. Unverifiable or live legacy records block launch and require repair; account login helpers never recover or terminate workers.
+
+## Model selection and observations
+
+A selected conversation keeps its requested model and effort, falling back independently to its observed settings, an exactly matching source slot, then `opus` and `high`. New conversations use those defaults. Create/edit can choose a model and effort; omitting an API field preserves the resolved selection, and an explicit empty string resets that field to the shared default. Changing conversation drops the previous conversation's pin. Claude destinations never inherit GPT model identifiers.
+
+Requested settings are separate from the latest observed settings and their timestamp. Legacy observations have unknown freshness. Deliberate Claude command, picker, or SDK model changes update intent; automatic fallback updates observation only. The dashboard exposes unknown observations and mismatches. Extended `[1m]` IDs are supported. An unavailable model requires an explicit choice before restarting; Vibe Remote does not silently substitute or replay the task.
+
+## Repeatable account setup and project memory
+
+Account setup has durable pending, ready, cancelled, failed, and interrupted states. Accounts shows progress and offers Cancel, Retry, and Repair setup. Repair checks the existing sign-in first. New human sign-ins still use Claude's official OAuth flow on the Mac.
+
+After authentication and before launch, Vibe Remote reconciles an approved baseline from normal `~/.claude`: `CLAUDE.md`, rules, skills, commands, agents, output styles, enabled user plugins, marketplace registrations, and safe presentation preferences. Plugins are registered through the installed Claude CLI. Credentials, native history, ordinary global environment values, and whole plugin-state directories are never copied. The explicit `settings.shared.json` hook/environment contract remains separate. Protected authentication, provider, model, config-directory, and worker-identity overrides are rejected in settings and filtered from inherited/direnv environments; project MCP credential variables remain available.
+
+The private profile manifest records fingerprints and reconciler ownership. Profile-only additions remain; conflicting shared entries get private backups, and revocation removes only owned entries. Missing required components block readiness. Existing workers keep their configuration until a deliberate stop/restart. Stop all sessions for an account before repairing a changed baseline.
+
+Managed accounts share learned memory for the same local project, identified by its canonical Git common directory (including linked worktrees), or canonical workspace path for non-Git folders. The private shared memory directory is set only for managed launches. Existing matching normal/profile memory is imported once by content and provenance. Identical notes are deduplicated; differing versions are retained under source-qualified names and linked from `IMPORTS.md`, with conflicts visible in session details. Original memory stays untouched. Normal Claude CLI memory behavior is unchanged.
+
+## Resource verification and diagnostics
+
+The dashboard disables persistent htmx HTML history snapshots and clears the old application cache key once. Back retrieves pages from the server. Pollers are keyed outside replaced DOM, allow one request per region, reject obsolete responses, pause hidden pages, and refresh once on return. Idle sessions poll at 20 seconds, transitional state at 1.5 seconds, activity at 2 seconds, and alerts at 60 seconds. Console rendering uses 300 lines of scrollback; daemon output remains bounded to 1 MiB per worker and 64 KiB per response.
+
+Idle computer-use checks run every two seconds without serializing the terminal; pending computer-use calls check at 200 ms. Closed-run activity is reclaimed without accepting late events. Orphan agent metadata follows checkpoint retention while protecting live conversations. Runtime maintenance retains active, current, and previous successful versions; other unused snapshots older than seven days are removed.
+
+`GET /api/diagnostics` requires the same private-dashboard header/origin boundary as the console and returns only allocation, goroutine, worker, buffer, activity-row, and request counters. It contains no prompts, environment values, SQL, or tool bodies.
+
+Regression commands include `node --test scripts/test-dashboard.mjs`. The disposable browser/resource fixture can be run with `SOAK_ADDR=127.0.0.1:47176 go test ./internal/server -run '^TestServeResourceSoak$' -v -count=1 -timeout=55m`, then `SOAK_URL=http://127.0.0.1:47176/ node scripts/soak-dashboard.mjs` with Playwright available. The script warms up for 60 seconds and measures 30 minutes, using a fresh inspector session per sample to avoid retaining inspected DOM. See the dated audit progress and resource report for measured results and acceptance limits.

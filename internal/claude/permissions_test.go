@@ -119,3 +119,35 @@ func TestOutputStylePreservesPermissionsAndHooks(t *testing.T) {
 		t.Fatal("profile settings were lost during provisioning")
 	}
 }
+
+func TestPermissionsRetainPolicyFieldsAndDeduplicateSharedHooks(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "settings.json")
+	if err := os.WriteFile(source, []byte(`{"permissions":{"deny":["Bash(rm *)"],"disableBypassPermissionsMode":"disable","additionalDirectories":["/safe"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "settings.shared.json"), []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"guard"},{"command":"guard","type":"command"}]},{"hooks":[{"command":"guard","type":"command"}]}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(directory, "session.json")
+	if err := provisionPermissions(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Permissions map[string]json.RawMessage
+		Hooks       map[string][]struct{ Hooks []json.RawMessage }
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if string(result.Permissions["disableBypassPermissionsMode"]) != `"disable"` || string(result.Permissions["additionalDirectories"]) != `["/safe"]` {
+		t.Fatal("policy fields were dropped")
+	}
+	if len(result.Hooks["Stop"]) != 1 || len(result.Hooks["Stop"][0].Hooks) != 1 {
+		t.Fatal("shared hooks run more than once")
+	}
+}

@@ -35,6 +35,10 @@ func TestHookDeliversContinuationAndPersistsResume(t *testing.T) {
 	if err := checkpoint.SaveContinuation(root, remote.ID, "The next step is to verify the unfinished feature."); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.BeginWorkerActivity(ctx, remote.ID, "current-run"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VIBE_REMOTE_ACTIVITY_RUN_ID", "current-run")
 	t.Setenv("VIBE_REMOTE_ACCOUNT_ID", account.ID)
 	t.Setenv("VIBE_REMOTE_SLOT_ID", remote.ID)
 	const nativeID = "2d758a1d-3630-4765-9f84-e91a8de810c7"

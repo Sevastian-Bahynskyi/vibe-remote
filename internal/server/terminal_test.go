@@ -62,7 +62,7 @@ done
 `), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	m, err := claude.New(s.layout.Root, database, claude.Options{ClaudePath: script, StopTimeout: 100 * time.Millisecond})
+	m, err := claude.New(s.layout.Root, database, claude.Options{BaselineSource: "-", ClaudePath: script, StopTimeout: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

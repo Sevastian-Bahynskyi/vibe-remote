@@ -552,7 +552,7 @@ func TestRecordAgentSettingsMergesNonEmptyValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	again, err := database.GetAgentSettings(ctx, model.ProviderClaude, "session-1")
-	if err != nil || again != settings {
+	if err != nil || again.Model != settings.Model || again.Effort != settings.Effort || !again.ObservedAt.Equal(*settings.ObservedAt) {
 		t.Fatalf("empty update clobbered settings: %#v, %v", again, err)
 	}
 	if err := database.RecordAgentSettings(ctx, model.ProviderClaude, "session-1", AgentSettings{Model: "--unsafe"}); err == nil {
@@ -590,7 +590,7 @@ func TestMigrationSevenUpgradesVersionSixDatabase(t *testing.T) {
 	database := openTestStore(t, path, time.Now)
 	defer database.Close()
 	var version int
-	if err := database.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
+	if err := database.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != migrations[len(migrations)-1].version {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	for _, column := range []string{"model", "effort"} {

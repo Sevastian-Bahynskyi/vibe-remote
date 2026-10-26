@@ -21,17 +21,19 @@ type pageData struct {
 	Back   string
 	Notice NoticeView
 
-	Alerts       []AlertView
-	Sessions     SessionListView
-	Session      SessionDetailView
-	Form         SessionFormView
-	Accounts     []AccountView
-	Workspaces   []WorkspaceView
-	Chats        []ChatGroupView
-	Chat         ChatGroupDetailView
-	Conversation ConversationDetailView
-	System       SystemView
-	Counts       CountsView
+	Alerts            []AlertView
+	Sessions          SessionListView
+	Session           SessionDetailView
+	Form              SessionFormView
+	Accounts          []AccountView
+	SetupJobs         []model.SetupJob
+	SetupRefreshEvery int
+	Workspaces        []WorkspaceView
+	Chats             []ChatGroupView
+	Chat              ChatGroupDetailView
+	Conversation      ConversationDetailView
+	System            SystemView
+	Counts            CountsView
 }
 
 // formLimit mirrors decodeJSON's cap. ParseForm has no size limit of its own for
@@ -64,6 +66,16 @@ func parseConversation(value string) *string {
 	default:
 		return &value
 	}
+}
+
+func parseSelection(value string) *string {
+	if value == "" || value == "keep" {
+		return nil
+	}
+	if value == "default" {
+		value = ""
+	}
+	return &value
 }
 
 // ---- screens ----
@@ -207,9 +219,13 @@ func (s *Server) uiAccounts(response http.ResponseWriter, request *http.Request)
 			pageData{Screen: "accounts", Title: "Accounts", Back: screenURL("home", ""), Notice: noticeFor(err)})
 		return
 	}
-	s.renderScreen(response, request, http.StatusOK, "accounts", pageData{
-		Screen: "accounts", Title: "Accounts", Back: screenURL("home", ""), Accounts: buildAccounts(state),
-	})
+	data, err := s.accountsPanel(request.Context(), state)
+	if err != nil {
+		s.renderFragment(response, http.StatusInternalServerError, "notice-oob", noticeFor(err))
+		return
+	}
+	data.Screen, data.Title, data.Back = "accounts", "Accounts", screenURL("home", "")
+	s.renderScreen(response, request, http.StatusOK, "accounts", data)
 }
 
 func (s *Server) uiWorkspaces(response http.ResponseWriter, request *http.Request) {
@@ -371,6 +387,7 @@ func (s *Server) uiCreateSession(response http.ResponseWriter, request *http.Req
 		AccountID:       field(request, "accountId"),
 		WorkspaceID:     field(request, "workspaceId"),
 		ResumeSessionID: parseConversation(field(request, "conversation")),
+		Model:           parseSelection(field(request, "model")), Effort: parseSelection(field(request, "effort")),
 	}
 	remote, err := s.createSlotOp(request.Context(), body)
 	if err != nil {
@@ -395,7 +412,8 @@ func (s *Server) uiUpdateSession(response http.ResponseWriter, request *http.Req
 		AccountID:       field(request, "accountId"),
 		WorkspaceID:     field(request, "workspaceId"),
 		ResumeSessionID: parseConversation(field(request, "conversation")),
-		Force:           field(request, "force") == "1",
+		Model:           parseSelection(field(request, "model")), Effort: parseSelection(field(request, "effort")),
+		Force: field(request, "force") == "1",
 	}
 	remote, err := s.updateSlotOp(request.Context(), id, body)
 	if err != nil {
@@ -506,8 +524,8 @@ func (s *Server) uiAddAccount(response http.ResponseWriter, request *http.Reques
 		s.renderFragment(response, http.StatusBadRequest, "notice-oob", noticeFor(err))
 		return
 	}
-	notice := NoticeView{Message: "Sign-in opened on the Mac. The account appears once it completes.", Tone: ToneGood}
-	if err := s.addAccountOp(field(request, "email")); err != nil {
+	notice := NoticeView{Message: "Sign-in opened on the Mac. Setup status updates here through completion.", Tone: ToneGood}
+	if _, err := s.addAccountOp(field(request, "email")); err != nil {
 		s.renderAccounts(response, request, statusOf(err), noticeFor(err))
 		return
 	}
@@ -691,7 +709,7 @@ func (s *Server) failSessionAction(
 // formFields replays a submission as hidden inputs so a forced retry carries the
 // same choices the user already made.
 func formFields(request *http.Request) []FieldView {
-	names := []string{"name", "accountId", "workspaceId", "conversation"}
+	names := []string{"name", "accountId", "workspaceId", "conversation", "model", "effort"}
 	fields := make([]FieldView, 0, len(names))
 	for _, name := range names {
 		if value := request.PostFormValue(name); value != "" {
@@ -707,10 +725,13 @@ func (s *Server) renderAccounts(response http.ResponseWriter, request *http.Requ
 		s.renderFragment(response, http.StatusInternalServerError, "notice-oob", noticeFor(err))
 		return
 	}
-	s.renderParts(response, status,
-		part{"account-list", buildAccounts(state)},
-		part{"notice-oob", notice},
-	)
+	data, err := s.accountsPanel(request.Context(), state)
+	if err != nil {
+		s.renderFragment(response, http.StatusInternalServerError, "notice-oob", noticeFor(err))
+		return
+	}
+	response.Header().Set("HX-Retarget", "#account-panel")
+	s.renderParts(response, status, part{"account-panel", data}, part{"notice-oob", notice})
 }
 
 func (s *Server) renderWorkspaces(response http.ResponseWriter, request *http.Request, status int, notice NoticeView) {

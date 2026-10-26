@@ -73,6 +73,25 @@
     <input id="session-name" name="name" type="text" autocomplete="off" value="{{.Name}}" placeholder="Chosen automatically">
   </div>
 
+  <div class="field">
+    <label class="field-label" for="session-model">Model</label>
+    <select id="session-model" name="model">
+      <option value="keep">Use the selected conversation’s model</option>
+      <option value="default">Shared default (Opus)</option>
+      <option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="haiku">Haiku</option>
+      <option value="opus[1m]">Opus · 1M context</option><option value="sonnet[1m]">Sonnet · 1M context</option>
+    </select>
+  </div>
+  <div class="field">
+    <label class="field-label" for="session-effort">Effort</label>
+    <select id="session-effort" name="effort">
+      <option value="keep">Use the selected conversation’s effort</option>
+      <option value="default">Shared default (High)</option>
+      <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Max</option>
+    </select>
+    <p>New conversations and unknown selections use Opus with high effort.</p>
+  </div>
+
   <button class="btn btn-primary btn-wide" type="submit"{{if not .CanSubmit}} disabled{{end}}>
     {{.SubmitLabel}}<span class="spinner htmx-indicator" aria-hidden="true"></span>
   </button>

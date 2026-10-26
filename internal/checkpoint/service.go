@@ -23,11 +23,10 @@ const (
 )
 
 type Repository interface {
+	RecordManagedAgentSettings(context.Context, store.ActivityEvent, store.AgentSettings) (bool, error)
 	RecordWorkerActivity(context.Context, store.ActivityEvent) error
 	RecordHookEvent(context.Context, store.HookEvent) (model.Session, model.Turn, error)
 	RecordAgentSettings(context.Context, model.Provider, string, store.AgentSettings) error
-	SetRemoteSessionAgent(context.Context, string, store.AgentSettings) error
-	LinkRemoteSessionConversation(context.Context, string, string) error
 	FindHandoff(context.Context, model.Provider, string, string) (model.Handoff, error)
 	ClaimHandoffByID(context.Context, string) (store.HandoffClaim, error)
 	CompleteHandoffClaim(context.Context, string, string) (model.Handoff, error)
@@ -132,24 +131,24 @@ func (s *Service) HandleStdin(
 	// slot row holds only the one conversation it is talking in now, so it is
 	// the checkpoint that has to remember which chat it belonged to.
 	event.SlotID = origin.SlotID
-	if event.Model != "" || event.Effort != "" {
-		settings := store.AgentSettings{Model: event.Model, Effort: event.Effort}
-		if err := s.repository.RecordAgentSettings(ctx, provider, event.NativeSessionID, settings); err != nil {
-			return HookResponse{}, fmt.Errorf("record agent settings: %w", err)
-		}
-		if origin.SlotID != "" {
-			if err := s.repository.SetRemoteSessionAgent(ctx, origin.SlotID, settings); err != nil {
-				return HookResponse{}, fmt.Errorf("record slot agent settings: %w", err)
-			}
-		}
+	if event.AgentID != "" {
+		return HookResponse{Ignored: true}, nil
 	}
-	// Managed workers bind their conversation atomically with activity above.
-	// Legacy callers without a worker run still link before recording.
-	if origin.SlotID != "" && origin.ActivityRunID == "" {
-		if err := s.repository.LinkRemoteSessionConversation(ctx, origin.SlotID, event.NativeSessionID); err != nil {
+	if event.Model != "" || event.Effort != "" {
+		settings := store.AgentSettings{Model: event.Model, Effort: event.Effort, RequestedModel: event.RequestedModel, RequestedEffort: event.Effort, UpdateIntent: event.UpdateIntent}
+		if origin.SlotID != "" {
+			accepted, err := s.repository.RecordManagedAgentSettings(ctx, store.ActivityEvent{SlotID: origin.SlotID, RunID: origin.ActivityRunID, AccountID: origin.AccountID, WorkspacePath: event.WorkspacePath, SessionID: event.NativeSessionID}, settings)
+			if err != nil {
+				return HookResponse{}, err
+			}
+			if !accepted {
+				return HookResponse{Ignored: true}, nil
+			}
+		} else if err := s.repository.RecordAgentSettings(ctx, provider, event.NativeSessionID, settings); err != nil {
 			return HookResponse{}, err
 		}
 	}
+
 	if event.Kind == store.HookEventSessionStart || event.Kind == store.HookEventModelSwitch {
 		return HookResponse{Ignored: true}, nil
 	}

@@ -175,14 +175,14 @@ func TestCodexContinuationCarriesNoAgentSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if remote.Model != "" || remote.Effort != "" {
+	if remote.Model != "opus" || remote.Effort != "high" {
 		t.Fatalf("Codex source carried settings: %#v", remote)
 	}
 	if len([]rune(remote.Name)) > 60 {
 		t.Fatalf("destination name was not truncated: %q", remote.Name)
 	}
 	args := strings.Join(runner.commands[len(runner.commands)-1].Args, " ")
-	if strings.Contains(args, "--model") || strings.Contains(args, "--effort") {
+	if !strings.Contains(args, "--model opus") || !strings.Contains(args, "--effort high") {
 		t.Fatalf("empty settings reached argv: %q", args)
 	}
 }

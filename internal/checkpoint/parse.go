@@ -37,8 +37,17 @@ func ParseHookEvent(provider model.Provider, payload []byte) (store.HookEvent, e
 	if provider == model.ProviderClaude {
 		event.Model = firstString(object, "model")
 		event.Effort = firstNestedString(object, "effort", "level")
+		event.AgentID = firstString(object, "agent_id")
 		if kind == store.HookEventModelSwitch {
 			event.Model = firstString(object, "to_model", "model")
+			switch firstString(object, "source") {
+			case "command", "picker", "sdk":
+				event.UpdateIntent = true
+				event.RequestedModel = firstString(object, "requested_model")
+				if event.RequestedModel == "" {
+					event.RequestedModel = "opus"
+				}
+			}
 		}
 		if !model.ValidModelName(event.Model) {
 			event.Model = ""

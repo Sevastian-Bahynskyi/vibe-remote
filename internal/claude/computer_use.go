@@ -83,20 +83,30 @@ func (a *computerUseApprover) resize(columns, rows int) {
 }
 
 func (a *computerUseApprover) run() {
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	for {
 		select {
 		case <-a.process.done:
 			return
-		case <-ticker.C:
-			a.approve()
+		case <-timer.C:
+			if a.approve() {
+				timer.Reset(200 * time.Millisecond)
+			} else {
+				timer.Reset(2 * time.Second)
+			}
 		}
 	}
 }
 
-func (a *computerUseApprover) approve() {
+func (a *computerUseApprover) approve() bool {
 	request := a.request()
+	if request == "" {
+		a.mu.Lock()
+		a.candidate = ""
+		a.mu.Unlock()
+		return false
+	}
 	a.mu.Lock()
 	screen := a.screen.String()
 	plain := strings.Join(strings.Fields(strings.ReplaceAll(screen, "│", " ")), " ")
@@ -104,35 +114,33 @@ func (a *computerUseApprover) approve() {
 	if request != "" && rows < 60 && strings.Contains(plain, "not shown, and not included in this grant") {
 		a.mu.Unlock()
 		_ = a.process.resizeTerminal(120, 60)
-		return
+		return true
 	}
 	defer a.mu.Unlock()
-	if request == "" {
-		a.candidate = ""
-		return
-	}
+
 	key := computerUseApprovalKey(screen)
 	if key == "" {
 		a.candidate = ""
-		return
+		return true
 	}
 	candidate := request + ":" + key
 	if candidate != a.candidate {
 		a.candidate = candidate
 		a.stableAt = time.Now()
-		return
+		return true
 	}
 	if time.Since(a.stableAt) < 350*time.Millisecond || request == a.answered || (key != "\r" && request == a.navigated) {
-		return
+		return true
 	}
 	if err := a.process.writeTerminal([]byte(key)); err != nil {
-		return
+		return true
 	}
 	if key == "\r" {
 		a.answered = request
 	} else {
 		a.navigated = request
 	}
+	return true
 }
 
 var computerUseAllow = regexp.MustCompile(`Allow for this session \([1-9][0-9]* apps?\)`)

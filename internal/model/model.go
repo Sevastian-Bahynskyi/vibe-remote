@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Provider string
 
@@ -48,10 +51,13 @@ const (
 )
 
 type Session struct {
-	ID              string   `json:"id"`
-	Provider        Provider `json:"provider"`
-	NativeSessionID string   `json:"nativeSessionId"`
-	AccountID       string   `json:"accountId,omitempty"`
+	RequestedModel  string     `json:"requestedModel,omitempty"`
+	RequestedEffort string     `json:"requestedEffort,omitempty"`
+	ObservedAt      *time.Time `json:"observedAt,omitempty"`
+	ID              string     `json:"id"`
+	Provider        Provider   `json:"provider"`
+	NativeSessionID string     `json:"nativeSessionId"`
+	AccountID       string     `json:"accountId,omitempty"`
 	// SlotID is the session slot this conversation was captured under, empty for
 	// a conversation recorded before slots were tracked or started outside one.
 	SlotID          string       `json:"slotId,omitempty"`
@@ -104,23 +110,28 @@ type GitSnapshot struct {
 }
 
 type WorkerStatus struct {
-	ActivityRunID string         `json:"-"`
-	Activity      WorkerActivity `json:"activity"`
-	ID            string         `json:"id,omitempty"`
-	Name          string         `json:"name,omitempty"`
-	AccountID     string         `json:"accountId,omitempty"`
-	WorkspacePath string         `json:"workspacePath,omitempty"`
-	Running       bool           `json:"running"`
-	PID           int            `json:"pid,omitempty"`
-	State         string         `json:"state"`
-	RemoteURL     string         `json:"remoteUrl,omitempty"`
-	LastError     string         `json:"lastError,omitempty"`
+	MemoryDirectory string         `json:"memoryDirectory,omitempty"`
+	MemoryConflicts int            `json:"memoryConflicts,omitempty"`
+	ActivityRunID   string         `json:"-"`
+	Activity        WorkerActivity `json:"activity"`
+	ID              string         `json:"id,omitempty"`
+	Name            string         `json:"name,omitempty"`
+	AccountID       string         `json:"accountId,omitempty"`
+	WorkspacePath   string         `json:"workspacePath,omitempty"`
+	Running         bool           `json:"running"`
+	PID             int            `json:"pid,omitempty"`
+	State           string         `json:"state"`
+	RemoteURL       string         `json:"remoteUrl,omitempty"`
+	LastError       string         `json:"lastError,omitempty"`
 }
 
 // RemoteSession is one Claude Remote Control session slot. Several may exist at
 // once, each pinned to an account, a workspace, and optionally an existing
 // Claude conversation to resume.
 type RemoteSession struct {
+	RequestedModel  string       `json:"requestedModel,omitempty"`
+	RequestedEffort string       `json:"requestedEffort,omitempty"`
+	ObservedAt      *time.Time   `json:"observedAt,omitempty"`
 	ID              string       `json:"id"`
 	Name            string       `json:"name"`
 	AccountID       string       `json:"accountId"`
@@ -169,6 +180,7 @@ func ValidEffortLevel(value string) bool {
 }
 
 func ValidModelName(value string) bool {
+	value = strings.TrimSuffix(value, "[1m]")
 	if value == "" || len(value) > 128 || value[0] == '-' {
 		return false
 	}

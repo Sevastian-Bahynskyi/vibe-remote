@@ -194,6 +194,21 @@ var migrations = []migration{
 			)`,
 		},
 	},
+	{version: 9, statements: []string{
+		`ALTER TABLE remote_sessions ADD COLUMN requested_model TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE remote_sessions ADD COLUMN requested_effort TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE remote_sessions ADD COLUMN observed_at TEXT`,
+		`UPDATE remote_sessions SET requested_model=model, requested_effort=effort`,
+		`ALTER TABLE session_agents ADD COLUMN requested_model TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE session_agents ADD COLUMN requested_effort TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE session_agents ADD COLUMN observed_at TEXT`,
+		`UPDATE session_agents SET requested_model=model, requested_effort=effort`,
+		`CREATE INDEX worker_activity_unfinished ON worker_activity_items(slot_id, kind, started_at) WHERE finished=0`,
+	}},
+	{version: 10, statements: []string{
+		`CREATE TABLE setup_jobs(id TEXT PRIMARY KEY,account_id TEXT NOT NULL DEFAULT '',email TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('pending','ready','cancelled','failed','interrupted')),error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX setup_jobs_pending_email ON setup_jobs(email) WHERE state='pending'`,
+	}},
 }
 
 func (s *Store) migrate(ctx context.Context) error {

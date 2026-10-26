@@ -160,5 +160,5 @@ func (s *Server) renderParts(response http.ResponseWriter, status int, parts ...
 }
 
 func isHTMXRequest(request *http.Request) bool {
-	return request.Header.Get("HX-Request") == "true"
+	return request.Header.Get("HX-Request") == "true" && request.Header.Get("HX-History-Restore-Request") != "true"
 }

@@ -129,8 +129,10 @@ func (s *Server) health(ctx context.Context) systemstate.Health {
 // the dashboard no longer polling that route it needs an owner that runs whether
 // or not anyone has the page open.
 func (s *Server) StartMaintenance(ctx context.Context) {
+	s.monitorSetupJobs(ctx)
 	go func() {
 		s.sweepClosedSessions(ctx)
+		_ = s.claude.CleanupRuntimes(time.Now())
 		ticker := time.NewTicker(maintenanceInterval)
 		defer ticker.Stop()
 		for {
@@ -139,6 +141,7 @@ func (s *Server) StartMaintenance(ctx context.Context) {
 				return
 			case <-ticker.C:
 				s.sweepClosedSessions(ctx)
+				_ = s.claude.CleanupRuntimes(time.Now())
 			}
 		}
 	}()
@@ -149,5 +152,7 @@ func (s *Server) sweepClosedSessions(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	_, _ = s.store.CleanupClosedSessions(ctx, time.Now().Add(-time.Duration(days)*24*time.Hour))
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	_, _ = s.store.CleanupClosedSessions(ctx, cutoff)
+	_ = s.store.CleanupOrphanMetadata(ctx, cutoff)
 }

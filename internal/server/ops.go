@@ -71,14 +71,8 @@ func forcible(err error) bool {
 
 // ---- accounts ----
 
-func (s *Server) addAccountOp(email string) error {
-	if strings.TrimSpace(email) == "" {
-		return failText(http.StatusBadRequest, "a valid email is required")
-	}
-	if err := launchAccountLogin(s.binary, email); err != nil {
-		return fail(http.StatusInternalServerError, err)
-	}
-	return nil
+func (s *Server) addAccountOp(email string) (model.SetupJob, error) {
+	return s.startAccountSetup(context.Background(), email, "")
 }
 
 func (s *Server) removeAccountOp(ctx context.Context, id string, deleteCheckpoints bool) error {
@@ -109,7 +103,7 @@ func (s *Server) refreshAccountOp(ctx context.Context, id string) (account model
 	defer s.opMu.Unlock()
 	account, refreshErr := s.claude.Refresh(ctx, id)
 	if refreshErr != nil {
-		if launchErr := launchAccountRelogin(s.binary, id); launchErr != nil {
+		if _, launchErr := s.startAccountSetup(ctx, account.Email, id); launchErr != nil {
 			return model.Account{}, false, fail(http.StatusInternalServerError, launchErr)
 		}
 		return model.Account{}, true, nil
@@ -157,16 +151,24 @@ func (s *Server) createSlotOp(ctx context.Context, body remoteSessionRequest) (m
 	if err != nil {
 		return model.RemoteSession{}, fail(http.StatusInternalServerError, err)
 	}
+	selection, err := s.store.ResolveRemoteSelection(ctx, model.RemoteSession{AccountID: account.ID, WorkspacePath: workspace.Path, ResumeSessionID: resume}, model.SelectionOverride{Model: body.Model, Effort: body.Effort})
+	if err != nil {
+		return model.RemoteSession{}, fail(http.StatusBadRequest, err)
+	}
 	remote, err := s.store.UpsertRemoteSession(ctx, model.RemoteSession{
 		Name:            uniqueSessionName(body.Name, account.Email, workspace, existing, ""),
 		AccountID:       account.ID,
 		WorkspaceID:     workspace.ID,
 		WorkspacePath:   workspace.Path,
 		ResumeSessionID: resume,
-		Desired:         model.DesiredRunning,
+		Model:           selection.Model, Effort: selection.Effort, RequestedModel: selection.Model, RequestedEffort: selection.Effort,
+		Desired: model.DesiredRunning,
 	})
 	if err != nil {
 		return model.RemoteSession{}, fail(http.StatusBadRequest, err)
+	}
+	if err := s.store.SetRemoteRequestedSelection(ctx, remote.ID, selection); err != nil {
+		return model.RemoteSession{}, fail(http.StatusInternalServerError, err)
 	}
 	if err := s.startRemote(ctx, remote, body.Force); err != nil {
 		_ = s.store.DeleteRemoteSession(ctx, remote.ID)
@@ -208,6 +210,14 @@ func (s *Server) updateSlotOp(ctx context.Context, id string, body remoteSession
 	if err != nil {
 		return model.RemoteSession{}, fail(http.StatusBadRequest, err)
 	}
+	selectionRemote := remote
+	if resume != remote.ResumeSessionID || account.ID != remote.AccountID || workspace.Path != remote.WorkspacePath {
+		selectionRemote = model.RemoteSession{AccountID: account.ID, WorkspacePath: workspace.Path, ResumeSessionID: resume}
+	}
+	selection, err := s.store.ResolveRemoteSelection(ctx, selectionRemote, model.SelectionOverride{Model: body.Model, Effort: body.Effort})
+	if err != nil {
+		return model.RemoteSession{}, fail(http.StatusBadRequest, err)
+	}
 	if err := s.stopRemote(ctx, remote, body.Force); err != nil {
 		return model.RemoteSession{}, failStop(err)
 	}
@@ -224,10 +234,16 @@ func (s *Server) updateSlotOp(ctx context.Context, id string, body remoteSession
 	remote.WorkspaceID = workspace.ID
 	remote.WorkspacePath = workspace.Path
 	remote.ResumeSessionID = resume
+	remote.RequestedModel, remote.RequestedEffort = selection.Model, selection.Effort
+	remote.Model, remote.Effort = selection.Model, selection.Effort
+	remote.ObservedAt = nil
 	remote.Desired = model.DesiredRunning
 	remote, err = s.store.UpsertRemoteSession(ctx, remote)
 	if err != nil {
 		return model.RemoteSession{}, fail(http.StatusBadRequest, err)
+	}
+	if err := s.store.SetRemoteRequestedSelection(ctx, remote.ID, selection); err != nil {
+		return model.RemoteSession{}, fail(http.StatusInternalServerError, err)
 	}
 	if err := s.startRemote(ctx, remote, true); err != nil {
 		return model.RemoteSession{}, failStart(err)

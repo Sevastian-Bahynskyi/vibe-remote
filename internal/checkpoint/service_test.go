@@ -163,8 +163,11 @@ func TestLifecycleHooksRecordAgentSettingsWithoutCreatingCheckpoint(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := database.BeginWorkerActivity(ctx, slot.ID, "test-run"); err != nil {
+		t.Fatal(err)
+	}
 	service := NewService(database, staticGitCapturer{snapshot: model.GitSnapshot{Root: workspace, CapturedAt: time.Now()}})
-	response, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID, SlotID: slot.ID}, strings.NewReader(`{
+	response, err := service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID, SlotID: slot.ID, ActivityRunID: "test-run"}, strings.NewReader(`{
 		"session_id":"claude-session",
 		"hook_event_name":"SessionStart",
 		"model":"claude-sonnet-4-5",
@@ -182,7 +185,7 @@ func TestLifecycleHooksRecordAgentSettingsWithoutCreatingCheckpoint(t *testing.T
 		t.Fatalf("stored settings = %#v, %v", stored, err)
 	}
 
-	response, err = service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID, SlotID: slot.ID}, strings.NewReader(`{
+	response, err = service.HandleStdin(ctx, model.ProviderClaude, HookOrigin{AccountID: account.ID, SlotID: slot.ID, ActivityRunID: "test-run"}, strings.NewReader(`{
 		"session_id":"claude-session",
 		"hook_event_name":"PostModelSwitch",
 		"to_model":"claude-opus-4-1",
@@ -223,13 +226,17 @@ func TestSlotHookAdoptsTheConversationItIsTalkingIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	service := NewService(database, staticGitCapturer{snapshot: model.GitSnapshot{Root: workspace, CapturedAt: time.Now()}})
 
 	prompt := func(slotID, conversation string) {
 		t.Helper()
 		payload := `{"session_id":` + quotedJSON(conversation) + `,"turn_id":"turn-1","hook_event_name":"UserPromptSubmit","prompt":"work","cwd":` + quotedJSON(workspace) + `}`
+		if err := database.BeginWorkerActivity(ctx, slotID, "test-run"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := service.HandleStdin(ctx, model.ProviderClaude,
-			HookOrigin{AccountID: account.ID, SlotID: slotID}, strings.NewReader(payload)); err != nil {
+			HookOrigin{AccountID: account.ID, SlotID: slotID, ActivityRunID: "test-run"}, strings.NewReader(payload)); err != nil {
 			t.Fatalf("handle prompt: %v", err)
 		}
 	}
@@ -263,11 +270,14 @@ func TestSlotAdoptsConversationAtSessionStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := database.BeginWorkerActivity(ctx, slot.ID, "test-run"); err != nil {
+		t.Fatal(err)
+	}
 	service := NewService(database, staticGitCapturer{})
 	payload := `{"session_id":"conversation-at-start","hook_event_name":"SessionStart","source":"startup","cwd":` + quotedJSON(workspace) + `}`
 
 	response, err := service.HandleStdin(ctx, model.ProviderClaude,
-		HookOrigin{AccountID: account.ID, SlotID: slot.ID}, strings.NewReader(payload))
+		HookOrigin{AccountID: account.ID, SlotID: slot.ID, ActivityRunID: "test-run"}, strings.NewReader(payload))
 	if err != nil {
 		t.Fatalf("handle session start: %v", err)
 	}
